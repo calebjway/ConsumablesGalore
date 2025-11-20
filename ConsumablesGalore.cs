@@ -289,17 +289,21 @@ public class ConsumablesGaloreMain(
 
         try
         {
-            // Simply assign the original item to the new ID
-            // SPT's itemDb accepts the same type that it returns
-            _logger.Info($"[{ModShortName}] Assigning original item to new ID...");
-            itemDb[newConsumableId] = originalItem;
-            _logger.Info($"[{ModShortName}] Assignment successful");
+            // Clone the item by serializing and deserializing
+            _logger.Info($"[{ModShortName}] Cloning original item...");
+            var itemJson = JsonSerializer.Serialize(originalItem);
+            var itemType = originalItem.GetType();
+            dynamic clonedItem = JsonSerializer.Deserialize(itemJson, itemType)!;
+            _logger.Info($"[{ModShortName}] Clone successful");
 
-            // Now modify the properties in-place
+            // Assign the cloned item to the new ID
+            itemDb[newConsumableId] = clonedItem;
+            _logger.Info($"[{ModShortName}] Assigned cloned item to new ID");
+
+            // Now modify the properties on the cloned item
             _logger.Info($"[{ModShortName}] Modifying item properties...");
 
             // Inspect the item type to find the correct property names
-            var itemType = originalItem.GetType();
             _logger.Info($"[{ModShortName}] Item type: {itemType.Name}");
             var properties = itemType.GetProperties();
             var propertyNames = new List<string>();
@@ -320,7 +324,7 @@ public class ConsumablesGaloreMain(
                 if (mongoIdConstructor != null)
                 {
                     var newMongoId = mongoIdConstructor.Invoke(new object[] { newConsumableId });
-                    idField.SetValue(originalItem, newMongoId);
+                    idField.SetValue(clonedItem, newMongoId);
                     _logger.Info($"[{ModShortName}] Set Id to {newConsumableId}");
                 }
             }
@@ -333,7 +337,7 @@ public class ConsumablesGaloreMain(
             }
 
             // Get props using reflection
-            dynamic props = propsField.GetValue(originalItem);
+            dynamic props = propsField.GetValue(clonedItem);
             if (props != null)
             {
                 // Inspect properties on the Properties object
