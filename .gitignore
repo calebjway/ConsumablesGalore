@@ -1,3 +1,23 @@
+# Build output
+bin/
+obj/
+
+# IDE and editor folders
+.vs/
+.vscode/
+.idea/
+.claude/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Backup and temporary files
+*.bak
+*.tmp
+*~
+
+# Old item files (removed from project)
 items/SJX-4-Fortifier.json
 items/SJX-1-Sprinter.json
 items/SJX-2-Sharpshooter.json
