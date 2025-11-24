@@ -142,7 +142,9 @@ public class ConsumablesGaloreMain(
         string? handbookParentId = null;
         foreach (var item in handbook.Items)
         {
-            if (item.Id == originalConsumable)
+            // SPT 4.0.4: Id is MongoId, need to convert to string for comparison
+            var itemIdStr = item.Id?.ToString();
+            if (itemIdStr == originalConsumable)
             {
                 // Convert ParentId to string and check if it's null or empty
                 handbookParentId = item.ParentId?.ToString();
@@ -162,7 +164,9 @@ public class ConsumablesGaloreMain(
         double handbookPrice = CalculatePrice(consumableFile.HandBookPrice, fleaPriceTable[originalConsumable]);
         foreach (var item in handbook.Items)
         {
-            if (item.Id == originalConsumable && consumableFile.HandBookPrice?.ToString() == "asOriginal")
+            // SPT 4.0.4: Id is MongoId, need to convert to string for comparison
+            var itemIdStr = item.Id?.ToString();
+            if (itemIdStr == originalConsumable && consumableFile.HandBookPrice?.ToString() == "asOriginal")
             {
                 handbookPrice = (double)item.Price;
                 break;
@@ -172,7 +176,7 @@ public class ConsumablesGaloreMain(
         // Create the item clone
         try
         {
-            CreateItemClone(originalConsumable, newConsumableId, consumableFile, itemDb, handbookParentId, fleaPrice, handbookPrice, handbook, fleaPriceTable);
+            CreateItemClone(originalConsumable, newConsumableId, consumableFile, itemDb, handbookParentId, fleaPrice, handbookPrice, handbook, fleaPriceTable, config);
         }
         catch (Exception ex)
         {
@@ -232,13 +236,22 @@ public class ConsumablesGaloreMain(
             AddToTrader(newConsumableId, consumableFile.Trader, traders);
         }
 
-        // Add craft
-        // SPT 4.0.4: Temporarily disabled - requires SPT's JsonUtil for proper enum deserialization
-        // System.Text.Json.JsonSerializer doesn't handle HideoutAreas enum conversion from integers
-        // TODO: Inject and use SPT's JsonUtil service for craft deserialization
-        if (consumableFile.Craft != null && config.Debug)
+        // Add craft recipe
+        if (consumableFile.Craft != null)
         {
-            _logger.Warning($"[{ModShortName}] Craft recipes not yet fully supported in SPT 4.0.4 - requires SPT JsonUtil service");
+            try
+            {
+                AddCraftRecipe(newConsumableId, consumableFile.Craft, production, config);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning($"[{ModShortName}] Failed to add craft recipe for {newConsumableId}: {ex.Message}");
+                if (config.RealDebug)
+                {
+                    _logger.Warning($"[{ModShortName}] Note: Craft system requires proper HideoutArea enum handling");
+                    _logger.Warning($"[{ModShortName}] Stack trace: {ex.StackTrace}");
+                }
+            }
         }
     }
 
@@ -282,7 +295,8 @@ public class ConsumablesGaloreMain(
         double fleaPrice,
         double handbookPrice,
         dynamic handbook,
-        dynamic fleaPriceTable)
+        dynamic fleaPriceTable,
+        ModConfig config)
     {
         // Get the original item - this is already a dynamic SPT TemplateItem
         dynamic originalItem = itemDb[originalConsumable];
@@ -290,42 +304,95 @@ public class ConsumablesGaloreMain(
         try
         {
             // Clone the item by serializing and deserializing
-            _logger.Info($"[{ModShortName}] Cloning original item...");
+            if (config.Debug)
+            {
+                _logger.Info($"[{ModShortName}] Cloning original item...");
+            }
             var itemJson = JsonSerializer.Serialize(originalItem);
             var itemType = originalItem.GetType();
-            dynamic clonedItem = JsonSerializer.Deserialize(itemJson, itemType)!;
-            _logger.Info($"[{ModShortName}] Clone successful");
+
+            // SPT 4.0.4: The Prototype property cannot be null, but the serialized JSON may contain "Prototype": null
+            // We need to recursively remove all null-valued properties from the JSON before deserializing
+            var jsonNode = JsonNode.Parse(itemJson);
+            if (jsonNode != null)
+            {
+                RemoveNullProperties(jsonNode);
+                itemJson = jsonNode.ToJsonString();
+            }
+
+            if (config.RealDebug)
+            {
+                _logger.Info($"[{ModShortName}] Item JSON snippet (after null cleanup): {itemJson.Substring(0, Math.Min(500, itemJson.Length))}");
+            }
+
+            dynamic clonedItem;
+            try
+            {
+                clonedItem = JsonSerializer.Deserialize(itemJson, itemType)!;
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Failed to deserialize cloned item: {ex.InnerException?.Message ?? ex.Message}", ex);
+            }
+
+            if (config.Debug)
+            {
+                _logger.Info($"[{ModShortName}] Clone successful");
+            }
 
             // Assign the cloned item to the new ID
             itemDb[newConsumableId] = clonedItem;
-            _logger.Info($"[{ModShortName}] Assigned cloned item to new ID");
+            if (config.Debug)
+            {
+                _logger.Info($"[{ModShortName}] Assigned cloned item to new ID");
+            }
 
             // Now modify the properties on the cloned item
-            _logger.Info($"[{ModShortName}] Modifying item properties...");
+            if (config.Debug)
+            {
+                _logger.Info($"[{ModShortName}] Modifying item properties...");
+            }
 
             // Inspect the item type to find the correct property names
-            _logger.Info($"[{ModShortName}] Item type: {itemType.Name}");
-            var properties = itemType.GetProperties();
-            var propertyNames = new List<string>();
-            foreach (var prop in properties)
+            if (config.RealDebug)
             {
-                propertyNames.Add(prop.Name);
+                _logger.Info($"[{ModShortName}] Item type: {itemType.Name}");
+                var properties = itemType.GetProperties();
+                var propertyNames = new List<string>();
+                foreach (var prop in properties)
+                {
+                    propertyNames.Add(prop.Name);
+                }
+                _logger.Info($"[{ModShortName}] Available properties: {string.Join(", ", propertyNames)}");
             }
-            _logger.Info($"[{ModShortName}] Available properties: {string.Join(", ", propertyNames)}");
 
             // SPT 4.0.4 uses Pascal case properties: Id, Name, Parent, Type, Properties
             // Modify Id using reflection since it's a MongoId type
             var idField = itemType.GetProperty("Id");
             if (idField != null)
             {
-                // Create a new MongoId from the string
-                var mongoIdType = idField.PropertyType;
-                var mongoIdConstructor = mongoIdType.GetConstructor(new[] { typeof(string) });
-                if (mongoIdConstructor != null)
+                try
                 {
-                    var newMongoId = mongoIdConstructor.Invoke(new object[] { newConsumableId });
-                    idField.SetValue(clonedItem, newMongoId);
-                    _logger.Info($"[{ModShortName}] Set Id to {newConsumableId}");
+                    if (string.IsNullOrEmpty(newConsumableId))
+                    {
+                        throw new Exception($"newConsumableId is null or empty when trying to set item Id");
+                    }
+                    // Create a new MongoId from the string
+                    var mongoIdType = idField.PropertyType;
+                    var mongoIdConstructor = mongoIdType.GetConstructor(new[] { typeof(string) });
+                    if (mongoIdConstructor != null)
+                    {
+                        var newMongoId = mongoIdConstructor.Invoke(new object[] { newConsumableId });
+                        idField.SetValue(clonedItem, newMongoId);
+                        if (config.Debug)
+                        {
+                            _logger.Info($"[{ModShortName}] Set Id to {newConsumableId}");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    throw new Exception($"Failed to set item Id: {ex.InnerException?.Message ?? ex.Message}", ex);
                 }
             }
 
@@ -342,32 +409,96 @@ public class ConsumablesGaloreMain(
             {
                 // Inspect properties on the Properties object
                 var propsType = props.GetType();
-                var propsProperties = propsType.GetProperties();
-                var propsPropertyNames = new List<string>();
-                foreach (var prop in propsProperties)
-                {
-                    propsPropertyNames.Add(prop.Name);
-                }
-                _logger.Info($"[{ModShortName}] Properties object has: {string.Join(", ", propsPropertyNames.Take(20))}...");
 
-                props.StimulatorBuffs = newConsumableId;
+                if (config.RealDebug)
+                {
+                    var propsProperties = propsType.GetProperties();
+                    var propsPropertyNames = new List<string>();
+                    foreach (var prop in propsProperties)
+                    {
+                        propsPropertyNames.Add(prop.Name);
+                    }
+                    _logger.Info($"[{ModShortName}] Properties object has: {string.Join(", ", propsPropertyNames.Take(20))}...");
+                }
+
+                // SPT 4.0.4: StimulatorBuffs might be a MongoId type
+                try
+                {
+                    if (string.IsNullOrEmpty(newConsumableId))
+                    {
+                        throw new Exception($"newConsumableId is null or empty when trying to set StimulatorBuffs");
+                    }
+
+                    var stimBuffsProp = propsType.GetProperty("StimulatorBuffs");
+                    if (stimBuffsProp != null)
+                    {
+                        var stimBuffsType = stimBuffsProp.PropertyType;
+
+                        // Check if it's a MongoId type
+                        if (stimBuffsType.Name.Contains("MongoId") || stimBuffsType.FullName?.Contains("MongoId") == true)
+                        {
+                            // Create MongoId from string
+                            var mongoIdConstructor = stimBuffsType.GetConstructor(new[] { typeof(string) });
+                            if (mongoIdConstructor != null)
+                            {
+                                var mongoIdValue = mongoIdConstructor.Invoke(new object[] { newConsumableId });
+                                stimBuffsProp.SetValue(props, mongoIdValue);
+                            }
+                        }
+                        else
+                        {
+                            // It's a string, just assign directly
+                            props.StimulatorBuffs = newConsumableId;
+                        }
+                    }
+                    else
+                    {
+                        // Property doesn't exist or is dynamic, try direct assignment
+                        props.StimulatorBuffs = newConsumableId;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    throw new Exception($"Failed to set StimulatorBuffs: {ex.InnerException?.Message ?? ex.Message}", ex);
+                }
 
                 if (consumableFile.BackgroundColor != null)
                 {
                     props.BackgroundColor = consumableFile.BackgroundColor;
                 }
 
-                // TODO: SPT 4.0.4 changed EffectsHealth and EffectsDamage to use enum keys instead of strings
-                // This requires a complete restructure of how we define effects in the JSON files
-                // For now, skip setting these to get basic items working
+                // SPT 4.0.4: EffectsHealth and EffectsDamage use enum keys instead of strings
+                // Attempt to set using reflection and dynamic conversion
                 if (consumableFile.EffectsHealth != null)
                 {
-                    _logger.Warning($"[{ModShortName}] EffectsHealth not yet supported in SPT 4.0.4 - requires data structure migration");
+                    try
+                    {
+                        SetEffects(props, "EffectsHealth", consumableFile.EffectsHealth, config);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warning($"[{ModShortName}] Failed to set EffectsHealth: {ex.Message}");
+                        if (config.RealDebug)
+                        {
+                            _logger.Warning($"[{ModShortName}] EffectsHealth structure may have changed in SPT 4.0.4");
+                        }
+                    }
                 }
 
                 if (consumableFile.EffectsDamage != null)
                 {
-                    _logger.Warning($"[{ModShortName}] EffectsDamage not yet supported in SPT 4.0.4 - requires data structure migration");
+                    try
+                    {
+                        SetEffects(props, "EffectsDamage", consumableFile.EffectsDamage, config);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warning($"[{ModShortName}] Failed to set EffectsDamage: {ex.Message}");
+                        if (config.RealDebug)
+                        {
+                            _logger.Warning($"[{ModShortName}] EffectsDamage structure may have changed in SPT 4.0.4");
+                        }
+                    }
                 }
 
                 if (consumableFile.MaxResource.HasValue)
@@ -488,32 +619,47 @@ public class ConsumablesGaloreMain(
         // Add locales
         if (consumableFile.Locales != null)
         {
-            dynamic locales = _databaseService.GetLocales();
-            foreach (var locale in consumableFile.Locales)
+            // SPT 4.0.4: Locales are lazy-loaded, use AddTransformer
+            var locales = _databaseService.GetLocales().Global;
+            foreach (var localeKvp in consumableFile.Locales)
             {
-                var lang = locale.Key;
-                var localeData = locale.Value;
+                var lang = localeKvp.Key;
+                var localeData = localeKvp.Value;
 
                 try
                 {
-                    dynamic langLocale = locales[lang];
-                    if (langLocale != null)
+                    if (locales.TryGetValue(lang, out var lazyLocale))
                     {
-                        langLocale[$"{newConsumableId} Name"] = localeData.Name;
-                        langLocale[$"{newConsumableId} ShortName"] = localeData.ShortName;
-                        langLocale[$"{newConsumableId} Description"] = localeData.Description;
+                        // Capture values to avoid closure issues
+                        var itemId = newConsumableId;
+                        var name = localeData.Name;
+                        var shortName = localeData.ShortName;
+                        var description = localeData.Description;
+
+                        lazyLocale.AddTransformer(dict =>
+                        {
+                            dict[$"{itemId} Name"] = name;
+                            dict[$"{itemId} ShortName"] = shortName;
+                            dict[$"{itemId} Description"] = description;
+                            return dict;
+                        });
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // Language locale doesn't exist, skip
+                    if (config.RealDebug)
+                    {
+                        _logger.Warning($"[{ModShortName}] Failed to add locale for {lang}: {ex.Message}");
+                    }
                 }
             }
         }
         }
         catch (Exception ex)
         {
-            throw new Exception($"Error in CreateItemClone at specific step: {ex.Message}", ex);
+            var innerMsg = ex.InnerException?.Message ?? ex.Message;
+            var innerStack = ex.InnerException?.StackTrace ?? ex.StackTrace;
+            throw new Exception($"Error in CreateItemClone: {innerMsg}\nStack: {innerStack}", ex);
         }
     }
 
@@ -586,152 +732,482 @@ public class ConsumablesGaloreMain(
 
     private void AddSpawnPoints(string originalConsumable, string newConsumableId, double spawnWeight, dynamic locations, ModConfig config)
     {
-        // SPT 4.0.4: Temporarily disabled - locations API structure needs investigation
-        // TODO: Find correct property name for locations dictionary
-        return;
-
-        var lootComposedKey = newConsumableId + "_composedkey";
-        var mapsList = new List<string> { "bigmap", "woods", "factory4_day", "factory4_night", "interchange", "laboratory", "lighthouse", "rezervbase", "shoreline", "tarkovstreets", "sandbox" };
-
-        dynamic locationsDict = locations;
-        foreach (var locationKvp in locationsDict)
+        try
         {
-            var locationName = locationKvp.Key.ToString();
-            var location = locationKvp.Value;
+            var lootComposedKey = newConsumableId + "_composedkey";
+            var mapsList = new List<string> { "bigmap", "woods", "factory4_day", "factory4_night", "interchange", "laboratory", "lighthouse", "rezervbase", "shoreline", "tarkovstreets", "sandbox" };
 
-            if (!mapsList.Contains(locationName)) continue;
-
-            // Process loose loot
-            if (location.looseLoot?.spawnpoints != null)
+            if (config.Debug)
             {
-                foreach (var point in location.looseLoot.spawnpoints)
+                _logger.Info($"[{ModShortName}] Adding spawn points for {newConsumableId}");
+            }
+
+            // SPT 4.0.4: Locations object has properties for each map, need to iterate through properties
+            var locationsType = locations.GetType();
+            var properties = locationsType.GetProperties();
+
+            foreach (var prop in properties)
+            {
+                var locationName = prop.Name.ToLower();
+
+                if (!mapsList.Contains(locationName)) continue;
+
+                var location = prop.GetValue(locations);
+                if (location == null) continue;
+
+                // Process loose loot - try both lowercase and PascalCase property names
+                dynamic looseLoot = null;
+                try
                 {
-                    if (point.template?.Items == null) continue;
+                    looseLoot = location.LooseLoot ?? location.looseLoot;
+                }
+                catch
+                {
+                    // Property doesn't exist, skip
+                }
 
-                    foreach (var item in point.template.Items)
+                if (looseLoot != null)
+                {
+                    dynamic spawnPoints = null;
+                    try
                     {
-                        if (item._tpl?.ToString() == originalConsumable)
+                        spawnPoints = looseLoot.SpawnPoints ?? looseLoot.spawnpoints ?? looseLoot.Spawnpoints;
+                    }
+                    catch
+                    {
+                        // Property doesn't exist
+                    }
+
+                    if (spawnPoints != null)
+                    {
+                        foreach (var point in spawnPoints)
                         {
-                            var originalItemId = item._id.ToString();
-                            double? originRelativeProb = null;
-
-                            if (point.itemDistribution != null)
+                            dynamic template = null;
+                            try
                             {
-                                foreach (var dist in point.itemDistribution)
-                                {
-                                    if (dist.composedKey?.key?.ToString() == originalItemId)
-                                    {
-                                        originRelativeProb = (double)dist.relativeProbability;
+                                template = point.Template ?? point.template;
+                            }
+                            catch { }
 
-                                        // Add new item to template
-                                        point.template.Items.Add(new
+                            dynamic items = null;
+                            if (template != null)
+                            {
+                                try
+                                {
+                                    items = template.Items ?? template.items;
+                                }
+                                catch { }
+                            }
+
+                            if (items == null) continue;
+
+                            foreach (var item in items)
+                            {
+                                string tpl = null;
+                                try
+                                {
+                                    tpl = item.Tpl?.ToString() ?? item._tpl?.ToString() ?? item.tpl?.ToString();
+                                }
+                                catch { }
+
+                                if (tpl == originalConsumable)
+                                {
+                                    string originalItemId = null;
+                                    try
+                                    {
+                                        originalItemId = item.Id?.ToString() ?? item._id?.ToString() ?? item.id?.ToString();
+                                    }
+                                    catch { }
+
+                                    if (string.IsNullOrEmpty(originalItemId)) continue;
+
+                                    double? originRelativeProb = null;
+
+                                    dynamic itemDistribution = null;
+                                    try
+                                    {
+                                        itemDistribution = point.ItemDistribution ?? point.itemDistribution;
+                                    }
+                                    catch { }
+
+                                    if (itemDistribution != null)
+                                    {
+                                        foreach (var dist in itemDistribution)
                                         {
-                                            _id = lootComposedKey,
-                                            _tpl = newConsumableId
-                                        });
+                                            string distKey = null;
+                                            try
+                                            {
+                                                var composedKey = dist.ComposedKey ?? dist.composedKey;
+                                                if (composedKey != null)
+                                                {
+                                                    distKey = composedKey.Key?.ToString() ?? composedKey.key?.ToString();
+                                                }
+                                            }
+                                            catch { }
+
+                                            if (distKey == originalItemId)
+                                            {
+                                                try
+                                                {
+                                                    var relProb = dist.RelativeProbability ?? dist.relativeProbability;
+                                                    originRelativeProb = Convert.ToDouble(relProb);
+                                                }
+                                                catch { }
+
+                                                // Add new item to template
+                                                if (items != null)
+                                                {
+                                                    try
+                                                    {
+                                                        // Create new item using anonymous object
+                                                        var newItem = new
+                                                        {
+                                                            _id = lootComposedKey,
+                                                            _tpl = newConsumableId
+                                                        };
+                                                        // Serialize and deserialize to match the collection's type
+                                                        var itemJson = JsonSerializer.Serialize(newItem);
+                                                        var itemNode = JsonNode.Parse(itemJson);
+                                                        ((dynamic)items).Add(itemNode);
+                                                    }
+                                                    catch (Exception ex)
+                                                    {
+                                                        if (config.Debug)
+                                                        {
+                                                            _logger.Warning($"[{ModShortName}] Failed to add item to template: {ex.Message}");
+                                                        }
+                                                    }
+                                                }
+                                                break;
+                                            }
+                                        }
+
+                                        if (originRelativeProb.HasValue && itemDistribution != null)
+                                        {
+                                            try
+                                            {
+                                                var newProbability = Math.Max((int)Math.Round(originRelativeProb.Value * spawnWeight), 1);
+                                                var newDist = new
+                                                {
+                                                    composedKey = new { key = lootComposedKey },
+                                                    relativeProbability = newProbability
+                                                };
+                                                var distJson = JsonSerializer.Serialize(newDist);
+                                                var distNode = JsonNode.Parse(distJson);
+                                                ((dynamic)itemDistribution).Add(distNode);
+
+                                                if (config.Debug)
+                                                {
+                                                    _logger.Info($"[{ModShortName}] Added {newConsumableId} to loose loot in {locationName} with probability {newProbability}");
+                                                }
+                                            }
+                                            catch (Exception ex)
+                                            {
+                                                if (config.Debug)
+                                                {
+                                                    _logger.Warning($"[{ModShortName}] Failed to add to item distribution: {ex.Message}");
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Process static loot
+                dynamic staticLoot = null;
+                try
+                {
+                    staticLoot = location.StaticLoot ?? location.staticLoot;
+                }
+                catch
+                {
+                    // Property doesn't exist
+                }
+
+                if (staticLoot != null)
+                {
+                    // SPT 4.0.4: StaticLoot is LazyLoad<Dictionary<MongoId, StaticLootDetails>>
+                    // Need to access .Value to get the actual dictionary
+                    dynamic staticLootDict = null;
+                    try
+                    {
+                        // Try to get the Value property (LazyLoad wrapper)
+                        var staticLootType = staticLoot.GetType();
+                        var valueProp = staticLootType.GetProperty("Value");
+                        if (valueProp != null)
+                        {
+                            staticLootDict = valueProp.GetValue(staticLoot);
+                        }
+                        else
+                        {
+                            // Already a dictionary
+                            staticLootDict = staticLoot;
+                        }
+                    }
+                    catch
+                    {
+                        staticLootDict = staticLoot;
+                    }
+
+                    if (staticLootDict != null)
+                    {
+                        foreach (var containerKvp in staticLootDict)
+                        {
+                            var containerName = containerKvp.Key?.ToString() ?? "unknown";
+                            var container = containerKvp.Value;
+
+                            dynamic itemDistribution = null;
+                            try
+                            {
+                                itemDistribution = container.ItemDistribution ?? container.itemDistribution;
+                            }
+                            catch { }
+
+                            if (itemDistribution == null) continue;
+
+                            try
+                            {
+                                int count = itemDistribution.Count;
+                                for (int i = 0; i < count; i++)
+                                {
+                                    var entry = itemDistribution[i];
+
+                                    string entryTpl = null;
+                                    try
+                                    {
+                                        entryTpl = entry.Tpl?.ToString() ?? entry.tpl?.ToString() ?? entry._tpl?.ToString();
+                                    }
+                                    catch { }
+
+                                    if (entryTpl == originalConsumable)
+                                    {
+                                        double originProbability = 0;
+                                        try
+                                        {
+                                            var relProb = entry.RelativeProbability ?? entry.relativeProbability;
+                                            originProbability = Convert.ToDouble(relProb);
+                                        }
+                                        catch { }
+
+                                        var spawnRelativeProbability = Math.Max((int)Math.Round(originProbability * spawnWeight), 1);
+
+                                        if (config.RealDebug)
+                                        {
+                                            _logger.Info($"[{ModShortName}] Adding {newConsumableId} to container {containerName} with probability {spawnRelativeProbability}");
+                                        }
+
+                                        try
+                                        {
+                                            var newEntry = new
+                                            {
+                                                tpl = newConsumableId,
+                                                relativeProbability = spawnRelativeProbability
+                                            };
+                                            var entryJson = JsonSerializer.Serialize(newEntry);
+                                            var entryNode = JsonNode.Parse(entryJson);
+                                            ((dynamic)itemDistribution).Add(entryNode);
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            if (config.Debug)
+                                            {
+                                                _logger.Warning($"[{ModShortName}] Failed to add to static loot: {ex.Message}");
+                                            }
+                                        }
                                         break;
                                     }
                                 }
-
-                                if (originRelativeProb.HasValue)
+                            }
+                            catch (Exception ex)
+                            {
+                                if (config.Debug)
                                 {
-                                    var newProbability = Math.Max((int)Math.Round(originRelativeProb.Value * spawnWeight), 1);
-                                    point.itemDistribution.Add(new
-                                    {
-                                        composedKey = new { key = lootComposedKey },
-                                        relativeProbability = newProbability
-                                    });
+                                    _logger.Warning($"[{ModShortName}] Error processing static loot container {containerName}: {ex.Message}");
                                 }
                             }
                         }
                     }
                 }
             }
-
-            // Process static loot
-            if (location.staticLoot != null)
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"[{ModShortName}] Failed to add spawn points for {newConsumableId}: {ex.Message}");
+            if (config.RealDebug)
             {
-                foreach (var containerKvp in location.staticLoot)
-                {
-                    var containerName = containerKvp.Key;
-                    var container = containerKvp.Value;
-
-                    if (container.itemDistribution == null) continue;
-
-                    for (int i = 0; i < container.itemDistribution.Count; i++)
-                    {
-                        var entry = container.itemDistribution[i];
-                        if (entry.tpl?.ToString() == originalConsumable)
-                        {
-                            var originProbability = (double)entry.relativeProbability;
-                            var spawnRelativeProbability = Math.Max((int)Math.Round(originProbability * spawnWeight), 1);
-
-                            if (config.RealDebug)
-                            {
-                                _logger.Warning($"[{ModShortName}] Adding {newConsumableId} to container {containerName} with probability {spawnRelativeProbability}");
-                            }
-
-                            container.itemDistribution.Add(new
-                            {
-                                tpl = newConsumableId,
-                                relativeProbability = spawnRelativeProbability
-                            });
-                            break;
-                        }
-                    }
-                }
+                _logger.Error($"[{ModShortName}] Stack trace: {ex.StackTrace}");
             }
         }
     }
 
     private void AddToTrader(string newConsumableId, TraderData traderData, dynamic traders)
     {
-        // SPT 4.0.4: Temporarily disabled - Items.Add type checking is too strict
-        // TODO: Find correct way to add items to trader assort
-        return;
-
-        var trader = traders[traderData.TraderId];
-
-        if (trader == null)
+        try
         {
-            _logger.Warning($"[{ModShortName}] Trader {traderData.TraderId} not found!");
-            return;
-        }
-
-        // SPT 4.0.4: Assort (capital A) instead of assort
-        // SPT 4.0.4: Items, BarterScheme, LoyaltyLevelItems (Pascal case)
-        // Add item to assort - serialize to JSON then deserialize to bypass type checking
-        dynamic assort = trader.Assort;
-        var itemJson = JsonSerializer.Serialize(new
-        {
-            _id = newConsumableId,
-            _tpl = newConsumableId,
-            parentId = "hideout",
-            slotId = "hideout",
-            upd = new
+            dynamic trader = null;
+            try
             {
-                UnlimitedCount = false,
-                StackObjectsCount = traderData.AmountForSale
+                trader = traders[traderData.TraderId];
             }
-        });
-        var itemNode = JsonNode.Parse(itemJson);
-        assort.Items.Add(itemNode);
-
-        // Add barter scheme (price)
-        assort.BarterScheme[newConsumableId] = new[]
-        {
-            new[]
+            catch (Exception ex)
             {
-                new
+                _logger.Warning($"[{ModShortName}] Failed to access trader {traderData.TraderId}: {ex.Message}");
+                return;
+            }
+
+            if (trader == null)
+            {
+                _logger.Warning($"[{ModShortName}] Trader {traderData.TraderId} not found!");
+                return;
+            }
+
+            // SPT 4.0.4: Try both Assort and assort
+            dynamic assort = null;
+            try
+            {
+                assort = trader.Assort ?? trader.assort;
+            }
+            catch
+            {
+                _logger.Warning($"[{ModShortName}] Could not access trader assort");
+                return;
+            }
+
+            if (assort == null)
+            {
+                _logger.Warning($"[{ModShortName}] Trader {traderData.TraderId} has no assort!");
+                return;
+            }
+
+            // Get Items collection - try both Pascal and lowercase
+            dynamic items = null;
+            try
+            {
+                items = assort.Items ?? assort.items;
+            }
+            catch { }
+
+            if (items != null)
+            {
+                try
                 {
-                    count = traderData.Price,
-                    _tpl = "5449016a4bdc2d6f028b456f" // Roubles
+                    // Clone an existing item from the trader to match the type structure
+                    if (items.Count > 0)
+                    {
+                        var firstItem = items[0];
+                        var itemType = firstItem.GetType();
+                        var itemJson = JsonSerializer.Serialize(firstItem);
+                        var itemNode = JsonNode.Parse(itemJson)!;
+
+                        // Modify properties to match our new item
+                        itemNode["_id"] = newConsumableId;
+                        itemNode["_tpl"] = newConsumableId;
+                        itemNode["parentId"] = "hideout";
+                        itemNode["slotId"] = "hideout";
+
+                        // Create or modify upd node
+                        if (itemNode["upd"] == null)
+                        {
+                            itemNode["upd"] = new JsonObject();
+                        }
+                        var updNode = itemNode["upd"].AsObject();
+                        updNode["UnlimitedCount"] = false;
+                        updNode["StackObjectsCount"] = traderData.AmountForSale;
+
+                        // Deserialize back to the correct type
+                        var modifiedItemJson = itemNode.ToJsonString();
+                        var newItem = JsonSerializer.Deserialize(modifiedItemJson, itemType);
+
+                        items.Add(newItem);
+                        _logger.Info($"[{ModShortName}] Added {newConsumableId} to trader {traderData.TraderId}");
+                    }
+                    else
+                    {
+                        // No existing items to clone from, try direct JsonNode approach
+                        var itemJson = JsonSerializer.Serialize(new
+                        {
+                            _id = newConsumableId,
+                            _tpl = newConsumableId,
+                            parentId = "hideout",
+                            slotId = "hideout",
+                            upd = new
+                            {
+                                UnlimitedCount = false,
+                                StackObjectsCount = traderData.AmountForSale
+                            }
+                        });
+                        var itemNode = JsonNode.Parse(itemJson);
+                        items.Add(itemNode);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning($"[{ModShortName}] Failed to add item to trader {traderData.TraderId}: {ex.Message}");
                 }
             }
-        };
 
-        // Add loyalty level requirement
-        assort.LoyaltyLevelItems[newConsumableId] = traderData.LoyaltyReq;
+            // Add barter scheme (price) - try both Pascal and lowercase
+            dynamic barterScheme = null;
+            try
+            {
+                barterScheme = assort.BarterScheme ?? assort.barterScheme ?? assort.Barter_scheme;
+            }
+            catch { }
+
+            if (barterScheme != null)
+            {
+                try
+                {
+                    var barterData = new object[][]
+                    {
+                        new object[]
+                        {
+                            new
+                            {
+                                count = traderData.Price,
+                                _tpl = "5449016a4bdc2d6f028b456f" // Roubles
+                            }
+                        }
+                    };
+
+                    // Serialize to JsonNode to match dictionary value type
+                    var barterJson = JsonSerializer.Serialize(barterData);
+                    var barterNode = JsonNode.Parse(barterJson);
+                    barterScheme[newConsumableId] = barterNode;
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning($"[{ModShortName}] Failed to add barter scheme for {newConsumableId}: {ex.Message}");
+                }
+            }
+
+            // Add loyalty level requirement - try both Pascal and lowercase
+            dynamic loyaltyLevelItems = null;
+            try
+            {
+                loyaltyLevelItems = assort.LoyaltyLevelItems ?? assort.loyaltyLevelItems ?? assort.Loyalty_level_items;
+            }
+            catch { }
+
+            if (loyaltyLevelItems != null)
+            {
+                try
+                {
+                    loyaltyLevelItems[newConsumableId] = traderData.LoyaltyReq;
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning($"[{ModShortName}] Failed to add loyalty level for {newConsumableId}: {ex.Message}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"[{ModShortName}] Failed to add {newConsumableId} to trader: {ex.Message}");
+        }
     }
 
     private async Task CheckForUpdates(string modPath)
@@ -832,5 +1308,293 @@ public class ConsumablesGaloreMain(
     private string ConvertIntegersToDoublesInJson(string json)
     {
         return ForceNumbersToDoubleFormat(json);
+    }
+
+    /// <summary>
+    /// Sets effects (health or damage) on item properties
+    /// Handles conversion from string keys to enum keys for SPT 4.0.4
+    /// </summary>
+    private void SetEffects(dynamic props, string propertyName, object effectsData, ModConfig config)
+    {
+        try
+        {
+            var propsType = props.GetType();
+            var effectsProp = propsType.GetProperty(propertyName);
+
+            if (effectsProp == null)
+            {
+                if (config.Debug)
+                {
+                    _logger.Warning($"[{ModShortName}] Property {propertyName} not found on item properties");
+                }
+                return;
+            }
+
+            // Get the existing effects dictionary from props
+            dynamic existingEffects = effectsProp.GetValue(props);
+
+            if (existingEffects == null)
+            {
+                if (config.Debug)
+                {
+                    _logger.Warning($"[{ModShortName}] {propertyName} is null on props");
+                }
+                return;
+            }
+
+            // Get the dictionary type and its key/value types
+            var dictType = existingEffects.GetType();
+            var genericArgs = dictType.GetGenericArguments();
+
+            if (genericArgs.Length != 2)
+            {
+                _logger.Warning($"[{ModShortName}] {propertyName} is not a dictionary type");
+                return;
+            }
+
+            var keyType = genericArgs[0];
+            var valueType = genericArgs[1];
+
+            if (config.RealDebug)
+            {
+                _logger.Info($"[{ModShortName}] {propertyName} key type: {keyType.Name}, value type: {valueType.Name}");
+            }
+
+            // Convert our Dictionary<string, EffectValue> or Dictionary<string, EffectDuration> to the target type
+            if (effectsData is Dictionary<string, EffectValue> healthEffects)
+            {
+                foreach (var effect in healthEffects)
+                {
+                    try
+                    {
+                        // Try to convert string key to enum if keyType is an enum
+                        object key;
+                        if (keyType.IsEnum)
+                        {
+                            // Try to parse the string as an enum
+                            key = Enum.Parse(keyType, effect.Key, ignoreCase: true);
+                        }
+                        else
+                        {
+                            key = effect.Key;
+                        }
+
+                        // Serialize the value and deserialize to the target type
+                        var valueJson = JsonSerializer.Serialize(effect.Value);
+                        var convertedValue = JsonSerializer.Deserialize(valueJson, valueType);
+
+                        // Add to the dictionary using reflection
+                        var addMethod = dictType.GetMethod("Add", new[] { keyType, valueType });
+                        if (addMethod != null && convertedValue != null)
+                        {
+                            addMethod.Invoke(existingEffects, new[] { key, convertedValue });
+
+                            if (config.RealDebug)
+                            {
+                                _logger.Info($"[{ModShortName}] Added effect {effect.Key} to {propertyName}");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (config.Debug)
+                        {
+                            _logger.Warning($"[{ModShortName}] Failed to add effect {effect.Key} to {propertyName}: {ex.Message}");
+                        }
+                    }
+                }
+            }
+            else if (effectsData is Dictionary<string, EffectDuration> damageEffects)
+            {
+                foreach (var effect in damageEffects)
+                {
+                    try
+                    {
+                        // Try to convert string key to enum if keyType is an enum
+                        object key;
+                        if (keyType.IsEnum)
+                        {
+                            key = Enum.Parse(keyType, effect.Key, ignoreCase: true);
+                        }
+                        else
+                        {
+                            key = effect.Key;
+                        }
+
+                        // Serialize the value and deserialize to the target type
+                        var valueJson = JsonSerializer.Serialize(effect.Value);
+                        var convertedValue = JsonSerializer.Deserialize(valueJson, valueType);
+
+                        // Add to the dictionary using reflection
+                        var addMethod = dictType.GetMethod("Add", new[] { keyType, valueType });
+                        if (addMethod != null && convertedValue != null)
+                        {
+                            addMethod.Invoke(existingEffects, new[] { key, convertedValue });
+
+                            if (config.RealDebug)
+                            {
+                                _logger.Info($"[{ModShortName}] Added effect {effect.Key} to {propertyName}");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (config.Debug)
+                        {
+                            _logger.Warning($"[{ModShortName}] Failed to add effect {effect.Key} to {propertyName}: {ex.Message}");
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning($"[{ModShortName}] Error setting {propertyName}: {ex.Message}");
+            if (config.RealDebug)
+            {
+                _logger.Warning($"[{ModShortName}] Stack trace: {ex.StackTrace}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Adds a craft recipe to hideout production
+    /// Attempts to handle HideoutArea enum conversion
+    /// </summary>
+    private void AddCraftRecipe(string newConsumableId, object craftData, dynamic production, ModConfig config)
+    {
+        try
+        {
+            // Serialize the craft data to JSON
+            var craftJson = JsonSerializer.Serialize(craftData);
+
+            if (config.RealDebug)
+            {
+                _logger.Info($"[{ModShortName}] Craft JSON: {craftJson}");
+            }
+
+            // Check if production is a list or collection
+            if (production == null)
+            {
+                _logger.Warning($"[{ModShortName}] Production recipes collection is null");
+                return;
+            }
+
+            var productionType = production.GetType();
+
+            if (config.RealDebug)
+            {
+                _logger.Info($"[{ModShortName}] Production type: {productionType.Name}");
+            }
+
+            // Try to get the element type if it's a collection
+            Type? recipeType = null;
+            if (productionType.IsGenericType)
+            {
+                var genericArgs = productionType.GetGenericArguments();
+                if (genericArgs.Length > 0)
+                {
+                    recipeType = genericArgs[0];
+
+                    if (config.RealDebug)
+                    {
+                        _logger.Info($"[{ModShortName}] Recipe type: {recipeType.Name}");
+                    }
+                }
+            }
+
+            if (recipeType == null)
+            {
+                _logger.Warning($"[{ModShortName}] Could not determine recipe type from production collection");
+                return;
+            }
+
+            // Deserialize craft data to the recipe type
+            var recipe = JsonSerializer.Deserialize(craftJson, recipeType);
+
+            if (recipe == null)
+            {
+                _logger.Warning($"[{ModShortName}] Failed to deserialize craft recipe");
+                return;
+            }
+
+            // Try to set the _id property
+            try
+            {
+                var idProp = recipeType.GetProperty("_id") ?? recipeType.GetProperty("Id");
+                if (idProp != null && idProp.CanWrite)
+                {
+                    idProp.SetValue(recipe, $"{newConsumableId}_craft");
+                }
+            }
+            catch (Exception ex)
+            {
+                if (config.Debug)
+                {
+                    _logger.Warning($"[{ModShortName}] Could not set craft recipe ID: {ex.Message}");
+                }
+            }
+
+            // Add the recipe to production
+            try
+            {
+                var addMethod = productionType.GetMethod("Add");
+                if (addMethod != null)
+                {
+                    addMethod.Invoke(production, new[] { recipe });
+                    _logger.Info($"[{ModShortName}] Added craft recipe for {newConsumableId}");
+                }
+                else
+                {
+                    _logger.Warning($"[{ModShortName}] Production collection does not have an Add method");
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Failed to add recipe to production: {ex.Message}", ex);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning($"[{ModShortName}] Error adding craft recipe: {ex.Message}");
+            if (config.RealDebug)
+            {
+                _logger.Warning($"[{ModShortName}] Stack trace: {ex.StackTrace}");
+            }
+            throw;
+        }
+    }
+
+    private void RemoveNullProperties(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            var keysToRemove = new List<string>();
+            foreach (var kvp in obj)
+            {
+                if (kvp.Value == null)
+                {
+                    keysToRemove.Add(kvp.Key);
+                }
+                else if (kvp.Value is JsonObject || kvp.Value is JsonArray)
+                {
+                    RemoveNullProperties(kvp.Value);
+                }
+            }
+            foreach (var key in keysToRemove)
+            {
+                obj.Remove(key);
+            }
+        }
+        else if (node is JsonArray array)
+        {
+            foreach (var item in array)
+            {
+                if (item != null)
+                {
+                    RemoveNullProperties(item);
+                }
+            }
+        }
     }
 }
