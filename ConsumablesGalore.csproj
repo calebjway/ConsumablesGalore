@@ -26,6 +26,14 @@
     </PackageReference>
   </ItemGroup>
 
+  <!-- Reference to WTT-ServerCommonLib -->
+  <ItemGroup>
+    <Reference Include="WTT-ServerCommonLib">
+      <HintPath>..\..\SPT\user\mods\WTT-ServerCommonLib\WTT-ServerCommonLib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
   <!-- Copy config and items folders to output directory -->
   <ItemGroup>
     <None Include="package.json">
@@ -35,6 +43,9 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Include="items\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="db\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

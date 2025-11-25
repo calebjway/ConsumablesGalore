@@ -11,6 +11,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using ConsumablesGalore.Models;
+using WTTServerCommonLib;
 
 namespace ConsumablesGalore;
 
@@ -23,7 +24,10 @@ public record ModMetadata : AbstractModMetadata
     public override SemanticVersioning.Version Version { get; init; } = new("2.0.0");
     public override SemanticVersioning.Range SptVersion { get; init; } = new("~4.0.0");
     public override List<string>? Incompatibilities { get; init; }
-    public override Dictionary<string, SemanticVersioning.Range>? ModDependencies { get; init; }
+    public override Dictionary<string, SemanticVersioning.Range>? ModDependencies { get; init; } = new()
+    {
+        ["com.wtt.commonlib"] = new(">=1.0.0")
+    };
     public override string? Url { get; init; } = "https://github.com/AlmightyTank/ConsumablesGalore";
     public override bool? IsBundleMod { get; init; } = false;
     public override string? License { get; init; } = "MIT";
@@ -33,12 +37,14 @@ public record ModMetadata : AbstractModMetadata
 public class ConsumablesGaloreMain(
     ISptLogger<ConsumablesGaloreMain> logger,
     ModHelper modHelper,
-    DatabaseService databaseService) : IOnLoad
+    DatabaseService databaseService,
+    WTTServerCommonLib.WTTServerCommonLib wttCommon) : IOnLoad
 {
     private const string ModShortName = "Consumables Galore";
     private readonly ISptLogger<ConsumablesGaloreMain> _logger = logger;
     private readonly ModHelper _modHelper = modHelper;
     private readonly DatabaseService _databaseService = databaseService;
+    private readonly WTTServerCommonLib.WTTServerCommonLib _wttCommon = wttCommon;
 
     public async Task OnLoad()
     {
@@ -68,11 +74,27 @@ public class ConsumablesGaloreMain(
         var itemsDirectory = Path.Combine(pathToMod, "items");
         if (Directory.Exists(itemsDirectory))
         {
-            TraverseDirectory(itemsDirectory, config, itemDb, handbook, fleaPriceTable, quests, traders, production, locations, globals);
+            TraverseDirectory(itemsDirectory, config, itemDb, handbook, fleaPriceTable, quests, traders, locations, globals);
         }
         else
         {
             _logger.Warning($"[{ModShortName}] Items directory not found at: {itemsDirectory}");
+        }
+
+        // Use WTT library to add hideout craft recipes (from db/CustomHideoutRecipes)
+        try
+        {
+            _logger.Info($"[{ModShortName}] Adding hideout craft recipes...");
+            await _wttCommon.CustomHideoutRecipeService.CreateHideoutRecipes(Assembly.GetExecutingAssembly());
+            _logger.Success($"[{ModShortName}] Hideout craft recipes added successfully!");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"[{ModShortName}] Failed to add hideout craft recipes: {ex.Message}");
+            if (config.RealDebug)
+            {
+                _logger.Error($"[{ModShortName}] Stack trace: {ex.StackTrace}");
+            }
         }
 
         _logger.Success($"[{ModShortName}] MusicManiac-Consumables-Galore finished loading");
@@ -86,7 +108,6 @@ public class ConsumablesGaloreMain(
         dynamic fleaPriceTable,
         dynamic quests,
         dynamic traders,
-        dynamic production,
         dynamic locations,
         dynamic globals)
     {
@@ -110,7 +131,7 @@ public class ConsumablesGaloreMain(
                     continue;
                 }
 
-                ProcessConsumableItem(consumableFile, config, itemDb, handbook, fleaPriceTable, quests, traders, production, locations, globals);
+                ProcessConsumableItem(consumableFile, config, itemDb, handbook, fleaPriceTable, quests, traders, locations, globals);
             }
             catch (Exception ex)
             {
@@ -131,7 +152,6 @@ public class ConsumablesGaloreMain(
         dynamic fleaPriceTable,
         dynamic quests,
         dynamic traders,
-        dynamic production,
         dynamic locations,
         dynamic globals)
     {
@@ -236,23 +256,8 @@ public class ConsumablesGaloreMain(
             AddToTrader(newConsumableId, consumableFile.Trader, traders);
         }
 
-        // Add craft recipe
-        if (consumableFile.Craft != null)
-        {
-            try
-            {
-                AddCraftRecipe(newConsumableId, consumableFile.Craft, production, config);
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning($"[{ModShortName}] Failed to add craft recipe for {newConsumableId}: {ex.Message}");
-                if (config.RealDebug)
-                {
-                    _logger.Warning($"[{ModShortName}] Note: Craft system requires proper HideoutArea enum handling");
-                    _logger.Warning($"[{ModShortName}] Stack trace: {ex.StackTrace}");
-                }
-            }
-        }
+        // Note: Craft recipes are now handled by WTT-ServerCommonLib's CustomHideoutRecipeService
+        // They are loaded from the db/CustomHideoutRecipes folder after all items are processed
     }
 
     private double CalculatePrice(object? priceValue, double originalPrice)
@@ -1454,114 +1459,6 @@ public class ConsumablesGaloreMain(
             {
                 _logger.Warning($"[{ModShortName}] Stack trace: {ex.StackTrace}");
             }
-        }
-    }
-
-    /// <summary>
-    /// Adds a craft recipe to hideout production
-    /// Attempts to handle HideoutArea enum conversion
-    /// </summary>
-    private void AddCraftRecipe(string newConsumableId, object craftData, dynamic production, ModConfig config)
-    {
-        try
-        {
-            // Serialize the craft data to JSON
-            var craftJson = JsonSerializer.Serialize(craftData);
-
-            if (config.RealDebug)
-            {
-                _logger.Info($"[{ModShortName}] Craft JSON: {craftJson}");
-            }
-
-            // Check if production is a list or collection
-            if (production == null)
-            {
-                _logger.Warning($"[{ModShortName}] Production recipes collection is null");
-                return;
-            }
-
-            var productionType = production.GetType();
-
-            if (config.RealDebug)
-            {
-                _logger.Info($"[{ModShortName}] Production type: {productionType.Name}");
-            }
-
-            // Try to get the element type if it's a collection
-            Type? recipeType = null;
-            if (productionType.IsGenericType)
-            {
-                var genericArgs = productionType.GetGenericArguments();
-                if (genericArgs.Length > 0)
-                {
-                    recipeType = genericArgs[0];
-
-                    if (config.RealDebug)
-                    {
-                        _logger.Info($"[{ModShortName}] Recipe type: {recipeType.Name}");
-                    }
-                }
-            }
-
-            if (recipeType == null)
-            {
-                _logger.Warning($"[{ModShortName}] Could not determine recipe type from production collection");
-                return;
-            }
-
-            // Deserialize craft data to the recipe type
-            var recipe = JsonSerializer.Deserialize(craftJson, recipeType);
-
-            if (recipe == null)
-            {
-                _logger.Warning($"[{ModShortName}] Failed to deserialize craft recipe");
-                return;
-            }
-
-            // Try to set the _id property
-            try
-            {
-                var idProp = recipeType.GetProperty("_id") ?? recipeType.GetProperty("Id");
-                if (idProp != null && idProp.CanWrite)
-                {
-                    idProp.SetValue(recipe, $"{newConsumableId}_craft");
-                }
-            }
-            catch (Exception ex)
-            {
-                if (config.Debug)
-                {
-                    _logger.Warning($"[{ModShortName}] Could not set craft recipe ID: {ex.Message}");
-                }
-            }
-
-            // Add the recipe to production
-            try
-            {
-                var addMethod = productionType.GetMethod("Add");
-                if (addMethod != null)
-                {
-                    addMethod.Invoke(production, new[] { recipe });
-                    _logger.Info($"[{ModShortName}] Added craft recipe for {newConsumableId}");
-                }
-                else
-                {
-                    _logger.Warning($"[{ModShortName}] Production collection does not have an Add method");
-                }
-            }
-            catch (Exception ex)
-            {
-                throw new Exception($"Failed to add recipe to production: {ex.Message}", ex);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning($"[{ModShortName}] Error adding craft recipe: {ex.Message}");
-            if (config.RealDebug)
-            {
-                _logger.Warning($"[{ModShortName}] Stack trace: {ex.StackTrace}");
-            }
-            throw;
         }
     }
 
