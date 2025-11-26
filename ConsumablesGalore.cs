@@ -1006,14 +1006,57 @@ public class ConsumablesGaloreMain(
 
                                         try
                                         {
-                                            var newEntry = new
+                                            // SPT 4.0.4: ItemDistribution needs proper type instantiation
+                                            // Get the element type from the list
+                                            var itemDistributionType = itemDistribution.GetType();
+                                            Type? elementType = null;
+
+                                            if (itemDistributionType.IsGenericType)
                                             {
-                                                tpl = newConsumableId,
-                                                relativeProbability = spawnRelativeProbability
-                                            };
-                                            var entryJson = JsonSerializer.Serialize(newEntry);
-                                            var entryNode = JsonNode.Parse(entryJson);
-                                            ((dynamic)itemDistribution).Add(entryNode);
+                                                var genericArgs = itemDistributionType.GetGenericArguments();
+                                                if (genericArgs.Length > 0)
+                                                {
+                                                    elementType = genericArgs[0];
+                                                }
+                                            }
+
+                                            if (elementType != null)
+                                            {
+                                                // Create new instance of ItemDistribution
+                                                var newEntry = Activator.CreateInstance(elementType);
+
+                                                if (newEntry != null)
+                                                {
+                                                    // Set the Tpl property (MongoId)
+                                                    var tplProp = elementType.GetProperty("Tpl");
+                                                    if (tplProp != null)
+                                                    {
+                                                        var tplType = tplProp.PropertyType;
+                                                        // Create MongoId from string
+                                                        var mongoIdConstructor = tplType.GetConstructor(new[] { typeof(string) });
+                                                        if (mongoIdConstructor != null)
+                                                        {
+                                                            var tplValue = mongoIdConstructor.Invoke(new object[] { newConsumableId });
+                                                            tplProp.SetValue(newEntry, tplValue);
+                                                        }
+                                                    }
+
+                                                    // Set the RelativeProbability property (needs to be float?)
+                                                    var relProbProp = elementType.GetProperty("RelativeProbability");
+                                                    if (relProbProp != null)
+                                                    {
+                                                        // Convert int to float for RelativeProbability
+                                                        relProbProp.SetValue(newEntry, (float)spawnRelativeProbability);
+                                                    }
+
+                                                    // Add to the list
+                                                    var addMethod = itemDistributionType.GetMethod("Add");
+                                                    if (addMethod != null)
+                                                    {
+                                                        addMethod.Invoke(itemDistribution, new[] { newEntry });
+                                                    }
+                                                }
+                                            }
                                         }
                                         catch (Exception ex)
                                         {
