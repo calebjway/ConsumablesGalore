@@ -251,10 +251,11 @@ public class ConsumablesGaloreMain(
         }
 
         // Add to trader
-        if (consumableFile.Trader != null)
-        {
-            AddToTrader(newConsumableId, consumableFile.Trader, traders);
-        }
+        // TEMPORARILY DISABLED FOR TESTING
+        //if (consumableFile.Trader != null)
+        //{
+        //    AddToTrader(newConsumableId, consumableFile.Trader, traders);
+        //}
 
         // Note: Craft recipes are now handled by WTT-ServerCommonLib's CustomHideoutRecipeService
         // They are loaded from the db/CustomHideoutRecipes folder after all items are processed
@@ -400,6 +401,11 @@ public class ConsumablesGaloreMain(
                     throw new Exception($"Failed to set item Id: {ex.InnerException?.Message ?? ex.Message}", ex);
                 }
             }
+
+            // NOTE: We do NOT set a custom Name (_name) property on cloned items
+            // The client-side game code uses _name to determine the C# class type
+            // Custom items must keep the original _name from their clone origin
+            // so the game knows what C# class to use (e.g., all stims keep their parent's _name)
 
             // Get Properties (was _props in SPT 3.x)
             var propsField = itemType.GetProperty("Properties");
@@ -1142,53 +1148,95 @@ public class ConsumablesGaloreMain(
             {
                 try
                 {
-                    // Clone an existing item from the trader to match the type structure
-                    if (items.Count > 0)
+                    // Get the item type from the list
+                    var itemsType = items.GetType();
+                    Type? itemType = null;
+
+                    if (itemsType.IsGenericType)
                     {
-                        var firstItem = items[0];
-                        var itemType = firstItem.GetType();
-                        var itemJson = JsonSerializer.Serialize(firstItem);
-                        var itemNode = JsonNode.Parse(itemJson)!;
-
-                        // Modify properties to match our new item
-                        itemNode["_id"] = newConsumableId;
-                        itemNode["_tpl"] = newConsumableId;
-                        itemNode["parentId"] = "hideout";
-                        itemNode["slotId"] = "hideout";
-
-                        // Create or modify upd node
-                        if (itemNode["upd"] == null)
+                        var genericArgs = itemsType.GetGenericArguments();
+                        if (genericArgs.Length > 0)
                         {
-                            itemNode["upd"] = new JsonObject();
+                            itemType = genericArgs[0];
                         }
-                        var updNode = itemNode["upd"].AsObject();
-                        updNode["UnlimitedCount"] = false;
-                        updNode["StackObjectsCount"] = traderData.AmountForSale;
-
-                        // Deserialize back to the correct type
-                        var modifiedItemJson = itemNode.ToJsonString();
-                        var newItem = JsonSerializer.Deserialize(modifiedItemJson, itemType);
-
-                        items.Add(newItem);
-                        _logger.Info($"[{ModShortName}] Added {newConsumableId} to trader {traderData.TraderId}");
                     }
-                    else
+
+                    if (itemType != null)
                     {
-                        // No existing items to clone from, try direct JsonNode approach
-                        var itemJson = JsonSerializer.Serialize(new
+                        var newItem = Activator.CreateInstance(itemType);
+
+                        if (newItem != null)
                         {
-                            _id = newConsumableId,
-                            _tpl = newConsumableId,
-                            parentId = "hideout",
-                            slotId = "hideout",
-                            upd = new
+                            // Set _id (MongoId)
+                            var idProp = itemType.GetProperty("Id");
+                            if (idProp != null)
                             {
-                                UnlimitedCount = false,
-                                StackObjectsCount = traderData.AmountForSale
+                                var idType = idProp.PropertyType;
+                                var mongoIdConstructor = idType.GetConstructor(new[] { typeof(string) });
+                                if (mongoIdConstructor != null)
+                                {
+                                    var idValue = mongoIdConstructor.Invoke(new object[] { newConsumableId });
+                                    idProp.SetValue(newItem, idValue);
+                                }
                             }
-                        });
-                        var itemNode = JsonNode.Parse(itemJson);
-                        items.Add(itemNode);
+
+                            // Set Template (MongoId) - SPT 4.0.4: Property is "Template" not "Tpl"
+                            var templateProp = itemType.GetProperty("Template");
+                            if (templateProp != null)
+                            {
+                                var templateType = templateProp.PropertyType;
+                                var mongoIdConstructor = templateType.GetConstructor(new[] { typeof(string) });
+                                if (mongoIdConstructor != null)
+                                {
+                                    var templateValue = mongoIdConstructor.Invoke(new object[] { newConsumableId });
+                                    templateProp.SetValue(newItem, templateValue);
+                                }
+                            }
+
+                            // Set parentId and slotId
+                            var parentIdProp = itemType.GetProperty("ParentId");
+                            if (parentIdProp != null)
+                            {
+                                parentIdProp.SetValue(newItem, "hideout");
+                            }
+
+                            var slotIdProp = itemType.GetProperty("SlotId");
+                            if (slotIdProp != null)
+                            {
+                                slotIdProp.SetValue(newItem, "hideout");
+                            }
+
+                            // Set upd.UnlimitedCount and upd.StackObjectsCount
+                            var updProp = itemType.GetProperty("Upd");
+                            if (updProp != null)
+                            {
+                                var updValue = updProp.GetValue(newItem);
+                                if (updValue != null)
+                                {
+                                    var updType = updValue.GetType();
+
+                                    var unlimitedCountProp = updType.GetProperty("UnlimitedCount");
+                                    if (unlimitedCountProp != null)
+                                    {
+                                        unlimitedCountProp.SetValue(updValue, false);
+                                    }
+
+                                    var stackCountProp = updType.GetProperty("StackObjectsCount");
+                                    if (stackCountProp != null)
+                                    {
+                                        stackCountProp.SetValue(updValue, traderData.AmountForSale);
+                                    }
+                                }
+                            }
+
+                            // Add to list using reflection to avoid dynamic type issues
+                            var addMethod = itemsType.GetMethod("Add");
+                            if (addMethod != null)
+                            {
+                                addMethod.Invoke(items, new[] { newItem });
+                                _logger.Info($"[{ModShortName}] Added {newConsumableId} to trader {traderData.TraderId}");
+                            }
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -1209,22 +1257,98 @@ public class ConsumablesGaloreMain(
             {
                 try
                 {
-                    var barterData = new object[][]
+                    // Get the value type from the dictionary
+                    var barterSchemeType = barterScheme.GetType();
+                    Type? valueType = null;
+
+                    if (barterSchemeType.IsGenericType)
                     {
-                        new object[]
+                        var genericArgs = barterSchemeType.GetGenericArguments();
+                        if (genericArgs.Length >= 2)
                         {
-                            new
+                            valueType = genericArgs[1]; // Dictionary<TKey, TValue> - get TValue
+                        }
+                    }
+
+                    if (valueType != null && valueType.IsGenericType)
+                    {
+                        // valueType is List<List<BarterScheme>>
+                        // Get the inner list type: List<BarterScheme>
+                        var outerListElementType = valueType.GetGenericArguments()[0]; // List<BarterScheme>
+
+                        if (outerListElementType.IsGenericType)
+                        {
+                            var barterSchemeElementType = outerListElementType.GetGenericArguments()[0]; // BarterScheme
+
+                            // Create List<List<BarterScheme>>
+                            var outerListType = typeof(List<>).MakeGenericType(outerListElementType);
+                            var outerList = Activator.CreateInstance(outerListType);
+
+                            // Create List<BarterScheme>
+                            var innerListType = typeof(List<>).MakeGenericType(barterSchemeElementType);
+                            var innerList = Activator.CreateInstance(innerListType);
+
+                            if (outerList != null && innerList != null)
                             {
-                                count = traderData.Price,
-                                _tpl = "5449016a4bdc2d6f028b456f" // Roubles
+                                // Create BarterScheme object
+                                var barterSchemeObj = Activator.CreateInstance(barterSchemeElementType);
+
+                                if (barterSchemeObj != null)
+                                {
+                                    // Set count property (needs to be double?)
+                                    var countProp = barterSchemeElementType.GetProperty("Count");
+                                    if (countProp != null)
+                                    {
+                                        // Convert int to double for Count
+                                        countProp.SetValue(barterSchemeObj, (double)traderData.Price);
+                                    }
+
+                                    // Set Tpl property (MongoId for roubles)
+                                    var tplProp = barterSchemeElementType.GetProperty("Tpl");
+                                    if (tplProp != null)
+                                    {
+                                        var tplType = tplProp.PropertyType;
+                                        var mongoIdConstructor = tplType.GetConstructor(new[] { typeof(string) });
+                                        if (mongoIdConstructor != null)
+                                        {
+                                            var tplValue = mongoIdConstructor.Invoke(new object[] { "5449016a4bdc2d6f028b456f" }); // Roubles
+                                            tplProp.SetValue(barterSchemeObj, tplValue);
+                                        }
+                                    }
+
+                                    // Add to inner list
+                                    var innerAddMethod = innerListType.GetMethod("Add");
+                                    if (innerAddMethod != null)
+                                    {
+                                        innerAddMethod.Invoke(innerList, new[] { barterSchemeObj });
+                                    }
+
+                                    // Add inner list to outer list
+                                    var outerAddMethod = outerListType.GetMethod("Add");
+                                    if (outerAddMethod != null)
+                                    {
+                                        outerAddMethod.Invoke(outerList, new[] { innerList });
+                                    }
+
+                                    // Add to dictionary using reflection
+                                    // Create MongoId key
+                                    var keyType = barterSchemeType.GetGenericArguments()[0];
+                                    var keyConstructor = keyType.GetConstructor(new[] { typeof(string) });
+                                    if (keyConstructor != null)
+                                    {
+                                        var key = keyConstructor.Invoke(new object[] { newConsumableId });
+
+                                        // Use reflection to set dictionary item to avoid dynamic type issues
+                                        var indexerProperty = barterSchemeType.GetProperty("Item");
+                                        if (indexerProperty != null)
+                                        {
+                                            indexerProperty.SetValue(barterScheme, outerList, new[] { key });
+                                        }
+                                    }
+                                }
                             }
                         }
-                    };
-
-                    // Serialize to JsonNode to match dictionary value type
-                    var barterJson = JsonSerializer.Serialize(barterData);
-                    var barterNode = JsonNode.Parse(barterJson);
-                    barterScheme[newConsumableId] = barterNode;
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -1232,19 +1356,57 @@ public class ConsumablesGaloreMain(
                 }
             }
 
-            // Add loyalty level requirement - try both Pascal and lowercase
+            // Add loyalty level requirement
+            // SPT 4.0.4: Property is called "LoyalLevelItems" not "LoyaltyLevelItems"
             dynamic loyaltyLevelItems = null;
             try
             {
-                loyaltyLevelItems = assort.LoyaltyLevelItems ?? assort.loyaltyLevelItems ?? assort.Loyalty_level_items;
+                var assortType = assort.GetType();
+                var loyaltyProp = assortType.GetProperty("LoyalLevelItems");
+                if (loyaltyProp != null)
+                {
+                    loyaltyLevelItems = loyaltyProp.GetValue(assort);
+                }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                _logger.Warning($"[{ModShortName}] Exception getting LoyalLevelItems: {ex.Message}");
+            }
 
             if (loyaltyLevelItems != null)
             {
                 try
                 {
-                    loyaltyLevelItems[newConsumableId] = traderData.LoyaltyReq;
+                    // Use reflection to set dictionary item with MongoId key
+                    var loyaltyDictType = loyaltyLevelItems.GetType();
+
+                    // Get the key type (should be MongoId)
+                    Type? keyType = null;
+                    if (loyaltyDictType.IsGenericType)
+                    {
+                        var genericArgs = loyaltyDictType.GetGenericArguments();
+                        if (genericArgs.Length > 0)
+                        {
+                            keyType = genericArgs[0];
+                        }
+                    }
+
+                    if (keyType != null)
+                    {
+                        // Create MongoId key from string
+                        var mongoIdConstructor = keyType.GetConstructor(new[] { typeof(string) });
+                        if (mongoIdConstructor != null)
+                        {
+                            var key = mongoIdConstructor.Invoke(new object[] { newConsumableId });
+
+                            // Set dictionary value using indexer property
+                            var indexerProperty = loyaltyDictType.GetProperty("Item");
+                            if (indexerProperty != null)
+                            {
+                                indexerProperty.SetValue(loyaltyLevelItems, traderData.LoyaltyReq, new[] { key });
+                            }
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -1381,17 +1543,21 @@ public class ConsumablesGaloreMain(
             // Get the existing effects dictionary from props
             dynamic existingEffects = effectsProp.GetValue(props);
 
+            // Get the property type to determine dictionary type
+            var dictType = effectsProp.PropertyType;
+
+            // If the dictionary is null, create a new instance
             if (existingEffects == null)
             {
                 if (config.Debug)
                 {
-                    _logger.Warning($"[{ModShortName}] {propertyName} is null on props");
+                    _logger.Warning($"[{ModShortName}] {propertyName} is null on props, creating new instance");
                 }
-                return;
-            }
 
-            // Get the dictionary type and its key/value types
-            var dictType = existingEffects.GetType();
+                // Create a new dictionary instance of the correct type
+                existingEffects = Activator.CreateInstance(dictType);
+                effectsProp.SetValue(props, existingEffects);
+            }
             var genericArgs = dictType.GetGenericArguments();
 
             if (genericArgs.Length != 2)
@@ -1431,15 +1597,18 @@ public class ConsumablesGaloreMain(
                         var valueJson = JsonSerializer.Serialize(effect.Value);
                         var convertedValue = JsonSerializer.Deserialize(valueJson, valueType);
 
-                        // Add to the dictionary using reflection
-                        var addMethod = dictType.GetMethod("Add", new[] { keyType, valueType });
-                        if (addMethod != null && convertedValue != null)
+                        // Use dictionary indexer to set/update value (avoids "key already exists" error)
+                        if (convertedValue != null)
                         {
-                            addMethod.Invoke(existingEffects, new[] { key, convertedValue });
-
-                            if (config.RealDebug)
+                            var indexerProperty = dictType.GetProperty("Item");
+                            if (indexerProperty != null)
                             {
-                                _logger.Info($"[{ModShortName}] Added effect {effect.Key} to {propertyName}");
+                                indexerProperty.SetValue(existingEffects, convertedValue, new[] { key });
+
+                                if (config.RealDebug)
+                                {
+                                    _logger.Info($"[{ModShortName}] Set effect {effect.Key} in {propertyName}");
+                                }
                             }
                         }
                     }
@@ -1447,7 +1616,8 @@ public class ConsumablesGaloreMain(
                     {
                         if (config.Debug)
                         {
-                            _logger.Warning($"[{ModShortName}] Failed to add effect {effect.Key} to {propertyName}: {ex.Message}");
+                            var innerMsg = ex.InnerException != null ? $" Inner: {ex.InnerException.Message}" : "";
+                            _logger.Warning($"[{ModShortName}] Failed to add effect {effect.Key} to {propertyName}: {ex.Message}{innerMsg}");
                         }
                     }
                 }
@@ -1473,15 +1643,18 @@ public class ConsumablesGaloreMain(
                         var valueJson = JsonSerializer.Serialize(effect.Value);
                         var convertedValue = JsonSerializer.Deserialize(valueJson, valueType);
 
-                        // Add to the dictionary using reflection
-                        var addMethod = dictType.GetMethod("Add", new[] { keyType, valueType });
-                        if (addMethod != null && convertedValue != null)
+                        // Use dictionary indexer to set/update value (avoids "key already exists" error)
+                        if (convertedValue != null)
                         {
-                            addMethod.Invoke(existingEffects, new[] { key, convertedValue });
-
-                            if (config.RealDebug)
+                            var indexerProperty = dictType.GetProperty("Item");
+                            if (indexerProperty != null)
                             {
-                                _logger.Info($"[{ModShortName}] Added effect {effect.Key} to {propertyName}");
+                                indexerProperty.SetValue(existingEffects, convertedValue, new[] { key });
+
+                                if (config.RealDebug)
+                                {
+                                    _logger.Info($"[{ModShortName}] Set effect {effect.Key} in {propertyName}");
+                                }
                             }
                         }
                     }
@@ -1489,7 +1662,8 @@ public class ConsumablesGaloreMain(
                     {
                         if (config.Debug)
                         {
-                            _logger.Warning($"[{ModShortName}] Failed to add effect {effect.Key} to {propertyName}: {ex.Message}");
+                            var innerMsg = ex.InnerException != null ? $" Inner: {ex.InnerException.Message}" : "";
+                            _logger.Warning($"[{ModShortName}] Failed to add effect {effect.Key} to {propertyName}: {ex.Message}{innerMsg}");
                         }
                     }
                 }

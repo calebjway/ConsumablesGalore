@@ -104,3 +104,15 @@ MIT License
 
 - GitHub: https://github.com/AlmightyTank/ConsumablesGalore
 - Report Issues: https://github.com/AlmightyTank/ConsumablesGalore/issues
+
+
+Trader item properties: Id, Template, ParentId, SlotId, Location, Desc, Upd, ExtensionData
+
+[2025-11-27 01:33:25.465][Info][ConsumablesGalore.ConsumablesGaloreMain] [Consumables Galore] Item type: TemplateItem
+[2025-11-27 01:33:25.465][Info][ConsumablesGalore.ConsumablesGaloreMain] [Consumables Galore] Available properties: Id, Name, Parent, Type, Properties, Prototype, Blocks, ExtensionData
+
+[2025-11-27 01:33:25.465][Info][ConsumablesGalore.ConsumablesGaloreMain] [Consumables Galore] Properties object has: AllowSpawnOnLocations, BeltMagazineRefreshCount, ChangePriceCoef, FixedPrice, SendToClient, Name, ShortName, Description, Weight, DialogId, WeightMultipliers, BackgroundColor, Width, Height, StackMaxSize, Rarity, SpawnChance, CreditsPrice, ItemSound, LeftHandItem...
+[2025-11-27 01:33:25.465][Info][ConsumablesGalore.ConsumablesGaloreMain] [Consumables Galore] EffectsHealth key type: HealthFactor, value type: EffectsHealthProperties
+
+[2025-11-27 01:33:25.465][Info][ConsumablesGalore.ConsumablesGaloreMain] [Consumables Galore] EffectsDamage key type: DamageEffectType, value type: EffectsDamageProperties
+

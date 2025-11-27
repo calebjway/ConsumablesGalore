@@ -10,6 +10,9 @@ public class ConsumableItemData
     [JsonPropertyName("id")]
     public string Id { get; set; } = string.Empty;
 
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
     [JsonPropertyName("fleaPrice")]
     public object? FleaPrice { get; set; }
 
