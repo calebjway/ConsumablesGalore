@@ -59,14 +59,35 @@ public class ConsumablesGaloreMain(
         // Check for updates
         await CheckForUpdates(pathToMod);
 
-        // Get database tables - SPT 4.0.4 uses DatabaseService properties directly
-        var itemDb = _databaseService.GetItems();
-        var handbook = _databaseService.GetHandbook();
-        var fleaPriceTable = _databaseService.GetPrices();
-        var quests = _databaseService.GetQuests();
-        var traders = _databaseService.GetTraders();
-        var locations = _databaseService.GetLocations();
-        var globals = _databaseService.GetGlobals();
+        // Get database tables - SPT 4.0.4 API
+        // DatabaseService doesn't have direct getters in 4.0.4
+        // We need to access via reflection or use a different service
+        var databaseServiceType = _databaseService.GetType();
+        var getItemsMethod = databaseServiceType.GetMethod("GetItems");
+        var getHandbookMethod = databaseServiceType.GetMethod("GetHandbook");
+        var getPricesMethod = databaseServiceType.GetMethod("GetPrices");
+        var getQuestsMethod = databaseServiceType.GetMethod("GetQuests");
+        var getTradersMethod = databaseServiceType.GetMethod("GetTraders");
+        var getLocationsMethod = databaseServiceType.GetMethod("GetLocations");
+        var getGlobalsMethod = databaseServiceType.GetMethod("GetGlobals");
+
+        if (getItemsMethod == null)
+        {
+            _logger.Error($"[{ModShortName}] DatabaseService.GetItems() method not found! Available methods:");
+            foreach (var method in databaseServiceType.GetMethods().Take(10))
+            {
+                _logger.Error($"[{ModShortName}]   - {method.Name}");
+            }
+            throw new Exception("DatabaseService API mismatch - GetItems() not found");
+        }
+
+        dynamic itemDb = getItemsMethod.Invoke(_databaseService, null);
+        dynamic handbook = getHandbookMethod?.Invoke(_databaseService, null);
+        dynamic fleaPriceTable = getPricesMethod?.Invoke(_databaseService, null);
+        dynamic quests = getQuestsMethod?.Invoke(_databaseService, null);
+        dynamic traders = getTradersMethod?.Invoke(_databaseService, null);
+        dynamic locations = getLocationsMethod?.Invoke(_databaseService, null);
+        dynamic globals = getGlobalsMethod?.Invoke(_databaseService, null);
 
         if (config.Debug)
         {
@@ -85,21 +106,22 @@ public class ConsumablesGaloreMain(
             _logger.Warning($"[{ModShortName}] Items directory not found: {itemsPath}");
         }
 
+        // TEMPORARILY DISABLED - Testing if WTT is causing item conflicts
         // Use WTT library to add hideout craft recipes (from db/CustomHideoutRecipes)
-        try
-        {
-            _logger.Info($"[{ModShortName}] Adding hideout craft recipes...");
-            await _wttCommon.CustomHideoutRecipeService.CreateHideoutRecipes(Assembly.GetExecutingAssembly());
-            _logger.Success($"[{ModShortName}] Hideout craft recipes added successfully!");
-        }
-        catch (Exception ex)
-        {
-            _logger.Error($"[{ModShortName}] Failed to add hideout craft recipes: {ex.Message}");
-            if (config.RealDebug)
-            {
-                _logger.Error($"[{ModShortName}] Stack trace: {ex.StackTrace}");
-            }
-        }
+        //try
+        //{
+        //    _logger.Info($"[{ModShortName}] Adding hideout craft recipes...");
+        //    await _wttCommon.CustomHideoutRecipeService.CreateHideoutRecipes(Assembly.GetExecutingAssembly());
+        //    _logger.Success($"[{ModShortName}] Hideout craft recipes added successfully!");
+        //}
+        //catch (Exception ex)
+        //{
+        //    _logger.Error($"[{ModShortName}] Failed to add hideout craft recipes: {ex.Message}");
+        //    if (config.RealDebug)
+        //    {
+        //        _logger.Error($"[{ModShortName}] Stack trace: {ex.StackTrace}");
+        //    }
+        //}
 
         _logger.Success($"[{ModShortName}] MusicManiac-Consumables-Galore finished loading");
     }
@@ -410,6 +432,25 @@ public class ConsumablesGaloreMain(
             // The client-side game code uses _name to determine the C# class type
             // Custom items must keep the original _name from their clone origin
             // so the game knows what C# class to use (e.g., all stims keep their parent's _name)
+
+            // Verify and fix the Name and Parent fields
+            var nameField = itemType.GetProperty("Name");
+            var parentField = itemType.GetProperty("Parent");
+
+            // The Parent field gets corrupted during JSON serialization - we need to restore it
+            if (parentField != null)
+            {
+                var originalParent = parentField.GetValue(originalItem);
+                parentField.SetValue(clonedItem, originalParent);
+
+                if (config.Debug)
+                {
+                    var currentName = nameField?.GetValue(clonedItem);
+                    var currentParent = parentField.GetValue(clonedItem);
+                    _logger.Info($"[{ModShortName}] Item Name (_name) after clone: {currentName}");
+                    _logger.Info($"[{ModShortName}] Item Parent (_parent) after restore: {currentParent}");
+                }
+            }
 
             // Get Properties (was _props in SPT 3.x)
             var propsField = itemType.GetProperty("Properties");
