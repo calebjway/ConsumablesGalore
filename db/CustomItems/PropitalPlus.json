@@ -1,0 +1,133 @@
+{
+  "cloneOrigin": "5c0e530286f7747fa1419862",
+  "id": "683291e8c5dd92b50a723020",
+	"name": "PropitalPlus",
+  "fleaPrice": 4,
+  "handBookPrice": 4,
+  "includeInSameQuestsAsOrigin": false,
+  "addSpawnsInSamePlacesAsOrigin": true,
+  "spawnWeightComparedToOrigin": 1,
+  "MaxResource": 2,
+  "BackgroundColor": "red",
+  "effects_health": {
+    "Health": { "value": 60 },
+    "Hydration": { "value": 15 },
+    "Energy": { "value": 10 }
+  },
+  "effects_damage": {
+    "Pain": {
+      "delay": 0,
+      "duration": 180,
+      "fadeOut": 30
+    },
+    "Fracture": {
+      "delay": 0,
+      "duration": 60,
+      "fadeOut": 20
+    }
+  },
+  "Buffs": [
+    {
+      "AbsoluteValue": true,
+      "BuffType": "HealthRate",
+      "Chance": 1,
+      "Delay": 0,
+      "Duration": 600,
+      "SkillName": "",
+      "Value": 3
+    },
+    {
+      "AbsoluteValue": true,
+      "BuffType": "SkillRate",
+      "Chance": 1,
+      "Delay": 0,
+      "Duration": 600,
+      "SkillName": "Health",
+      "Value": 40
+    },
+	{
+      "AbsoluteValue": true,
+      "BuffType": "SkillRate",
+      "Chance": 1,
+      "Delay": 0,
+      "Duration": 600,
+      "SkillName": "Metabolism",
+      "Value": 40
+    },
+	{
+      "AbsoluteValue": true,
+      "BuffType": "SkillRate",
+      "Chance": 1,
+      "Delay": 0,
+      "Duration": 600,
+      "SkillName": "StressResistance",
+      "Value": 40
+    },
+    {
+      "AbsoluteValue": true,
+      "BuffType": "SkillRate",
+      "Chance": 1,
+      "Delay": 0,
+      "Duration": 600,
+      "SkillName": "Vitality",
+      "Value": 40
+    }
+  ],
+  "locales": {
+    "en": {
+      "name": "Tarkov-made Propital injector",
+      "shortName": "Propital+",
+      "description": "An enhanced version of the Propital regenerative stimulant injector. Fortified with extra bioactive peptides, immune boosters, and anti-stress adaptogens. Accelerates healing, suppresses pain, and enhances vitality for a longer duration. Black-market formula developed from raid scraps."
+    }
+  },
+  "trader": {
+    "traderId": "54cb57776803fa99248b456e",
+    "loyaltyReq": 3,
+    "price": 85000,
+    "amountForSale": 6
+  },
+  "craft": {
+    "_id": "683291f3dadf995df7b5a9cb",
+    "areaType": 7,
+    "requirements": [
+      {
+        "areaType": 7,
+        "requiredLevel": 2,
+        "type": "Area"
+      },
+      {
+        "templateId": "5d1b39a386f774252339976f",
+        "type": "Tool"
+      },
+      {
+        "templateId": "5c0e530286f7747fa1419862",
+        "count": 1,
+        "isFunctional": false,
+        "isEncoded": false,
+        "type": "Item"
+      },
+      {
+        "templateId": "5751496424597720a27126da",
+        "count": 1,
+        "isFunctional": false,
+        "isEncoded": false,
+        "type": "Item"
+      },
+      {
+        "templateId": "590c5f0d86f77413997acfab",
+        "count": 1,
+        "isFunctional": false,
+        "isEncoded": false,
+        "type": "Item"
+      }
+    ],
+    "productionTime": 1500,
+    "needFuelForAllProductionTime": false,
+    "locked": false,
+    "endProduct": "683291e8c5dd92b50a723020",
+    "continuous": false,
+    "count": 1,
+    "productionLimitCount": 0,
+    "isEncoded": false
+  }
+}

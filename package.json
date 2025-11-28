@@ -5,5 +5,7 @@
   "license": "MIT",
   "main": "ConsumablesGalore.dll",
   "sptVersion": "~4.0.4",
-  "dependencies": {}
+  "dependencies": {
+    "WTT-ServerCommonLib": ">=1.0.0"
+  }
 }

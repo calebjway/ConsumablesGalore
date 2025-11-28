@@ -59,26 +59,30 @@ public class ConsumablesGaloreMain(
         // Check for updates
         await CheckForUpdates(pathToMod);
 
-        // Get database tables
-        var tables = _databaseService.GetTables();
-        var itemDb = tables.Templates.Items;
-        var handbook = tables.Templates.Handbook;
-        var fleaPriceTable = tables.Templates.Prices;
-        var quests = tables.Templates.Quests;
-        var traders = tables.Traders;
-        var production = tables.Hideout.Production.Recipes;
+        // Get database tables - SPT 4.0.4 uses DatabaseService properties directly
+        var itemDb = _databaseService.GetItems();
+        var handbook = _databaseService.GetHandbook();
+        var fleaPriceTable = _databaseService.GetPrices();
+        var quests = _databaseService.GetQuests();
+        var traders = _databaseService.GetTraders();
         var locations = _databaseService.GetLocations();
-        var globals = tables.Globals;
+        var globals = _databaseService.GetGlobals();
 
-        // Process all JSON files in the items directory
-        var itemsDirectory = Path.Combine(pathToMod, "items");
-        if (Directory.Exists(itemsDirectory))
+        if (config.Debug)
         {
-            TraverseDirectory(itemsDirectory, config, itemDb, handbook, fleaPriceTable, quests, traders, locations, globals);
+            _logger.Info($"[{ModShortName}] Database tables retrieved successfully");
+        }
+
+        // Traverse the items directory and process consumables
+        var itemsPath = Path.Combine(pathToMod, "items");
+        if (Directory.Exists(itemsPath))
+        {
+            _logger.Info($"[{ModShortName}] Processing items from: {itemsPath}");
+            TraverseDirectory(itemsPath, config, itemDb, handbook, fleaPriceTable, quests, traders, locations, globals);
         }
         else
         {
-            _logger.Warning($"[{ModShortName}] Items directory not found at: {itemsDirectory}");
+            _logger.Warning($"[{ModShortName}] Items directory not found: {itemsPath}");
         }
 
         // Use WTT library to add hideout craft recipes (from db/CustomHideoutRecipes)

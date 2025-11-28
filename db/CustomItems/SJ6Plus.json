@@ -1,0 +1,131 @@
+{
+	"cloneOrigin": "5c0e531d86f7747fa23f4d42",
+	"id": "6832962c2b1458c4ea86f8ec",
+	"name": "SJ6Plus",
+	"fleaPrice": 98000,
+	"handBookPrice": 98000,
+	"includeInSameQuestsAsOrigin": false,
+	"addSpawnsInSamePlacesAsOrigin": true,
+	"spawnWeightComparedToOrigin": 0.5,
+	"MaxResource": 1,
+	"BackgroundColor": "red",
+	"effects_health": {
+        "Energy": {
+          "value": -20
+        }
+    },
+	"effects_damage": {
+		"Pain": {
+			"delay": 0,
+			"duration": 45,
+			"fadeOut": 15
+		}
+	},
+	"Buffs": [
+		{
+			"AbsoluteValue": true,
+			"BuffType": "StaminaRate",
+			"Chance": 1,
+			"Delay": 0,
+			"Duration": 600,
+			"SkillName": "",
+			"Value": 3.5
+		},
+		{
+			"AbsoluteValue": true,
+			"BuffType": "MaxStamina",
+			"Chance": 1,
+			"Delay": 0,
+			"Duration": 600,
+			"SkillName": "",
+			"Value": 60
+		},
+		{
+			"AbsoluteValue": true,
+			"BuffType": "SkillRate",
+			"Chance": 1,
+			"Delay": 0,
+			"Duration": 600,
+			"SkillName": "Endurance",
+			"Value": 20
+		},
+		{
+			"AbsoluteValue": true,
+			"BuffType": "SkillRate",
+			"Chance": 1,
+			"Delay": 0,
+			"Duration": 600,
+			"SkillName": "Strength",
+			"Value": 20
+		},
+    	{
+			"AbsoluteValue": true,
+			"BuffType": "HandsTremor",
+			"Chance": 0.2,
+			"Delay": 840,
+			"Duration": 20,
+			"SkillName": "",
+			"Value": 0
+		},
+		{
+			"AbsoluteValue": true,
+			"BuffType": "QuantumTunnelling",
+			"Chance": 0.2,
+			"Delay": 840,
+			"Duration": 20,
+			"SkillName": "",
+			"Value": 0
+		}
+	],
+	"locales": {
+		"en": {
+			"name": "SJ6 Plus combat stim",
+			"shortName": "SJ6+",
+			"description": "An improved version of the SJ6 TGLabs stim, enhanced with synthetic performance boosters and advanced metabolic activators. Increases max stamina and movement speed significantly, but induces tremors after prolonged use. For emergency escape and sprint-focused operations only. Do not use repeatedly. Developed under black-budget military research contracts."
+		}
+	},
+	"trader": {
+		"traderId": "54cb57776803fa99248b456e",
+		"loyaltyReq": 4,
+		"price": 98000,
+		"amountForSale": 4
+	},
+	"craft": {
+		"_id": "68329648996a0a05a5ad8957",
+		"areaType": 7,
+		"requirements": [
+			{
+				"areaType": 7,
+				"requiredLevel": 3,
+				"type": "Area"
+			},
+			{
+				"templateId": "5d1b39a386f774252339976f",
+				"type": "Tool"
+			},
+			{
+				"templateId": "5c0e531d86f7747fa23f4d42",
+				"count": 1,
+				"type": "Item"
+			},
+			{
+				"templateId": "5751435d24597720a27126d1",
+				"count": 3,
+				"type": "Item"
+			},
+			{
+				"templateId": "590c5d4b86f774784e1b9c45",
+				"count": 2,
+				"type": "Item"
+			}
+		],
+		"productionTime": 1800,
+		"needFuelForAllProductionTime": true,
+		"locked": false,
+		"endProduct": "6832962c2b1458c4ea86f8ec",
+		"continuous": false,
+		"count": 1,
+		"productionLimitCount": 0,
+		"isEncoded": false
+	}
+}
