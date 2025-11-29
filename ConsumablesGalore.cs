@@ -4,6 +4,8 @@ using SPTarkov.Server.Core.DI;
 using SPTarkov.Server.Core.Helpers;
 using SPTarkov.Server.Core.Models.Eft.Hideout;
 using SPTarkov.Server.Core.Models.Utils;
+using SPTarkov.Server.Core.Models.Common;
+using SPTarkov.Server.Core.Models.Eft.Common.Tables;
 using SPTarkov.Server.Core.Services;
 using System.Dynamic;
 using System.Linq;
@@ -95,7 +97,7 @@ public class ConsumablesGaloreMain(
         }
 
         // Traverse the items directory and process consumables
-        var itemsPath = Path.Combine(pathToMod, "items");
+        var itemsPath = System.IO.Path.Combine(pathToMod, "items");
         if (Directory.Exists(itemsPath))
         {
             _logger.Info($"[{ModShortName}] Processing items from: {itemsPath}");
@@ -106,22 +108,21 @@ public class ConsumablesGaloreMain(
             _logger.Warning($"[{ModShortName}] Items directory not found: {itemsPath}");
         }
 
-        // TEMPORARILY DISABLED - Testing if WTT is causing item conflicts
         // Use WTT library to add hideout craft recipes (from db/CustomHideoutRecipes)
-        //try
-        //{
-        //    _logger.Info($"[{ModShortName}] Adding hideout craft recipes...");
-        //    await _wttCommon.CustomHideoutRecipeService.CreateHideoutRecipes(Assembly.GetExecutingAssembly());
-        //    _logger.Success($"[{ModShortName}] Hideout craft recipes added successfully!");
-        //}
-        //catch (Exception ex)
-        //{
-        //    _logger.Error($"[{ModShortName}] Failed to add hideout craft recipes: {ex.Message}");
-        //    if (config.RealDebug)
-        //    {
-        //        _logger.Error($"[{ModShortName}] Stack trace: {ex.StackTrace}");
-        //    }
-        //}
+        try
+        {
+            _logger.Info($"[{ModShortName}] Adding hideout craft recipes...");
+            await _wttCommon.CustomHideoutRecipeService.CreateHideoutRecipes(Assembly.GetExecutingAssembly());
+            _logger.Success($"[{ModShortName}] Hideout craft recipes added successfully!");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"[{ModShortName}] Failed to add hideout craft recipes: {ex.Message}");
+            if (config.RealDebug)
+            {
+                _logger.Error($"[{ModShortName}] Stack trace: {ex.StackTrace}");
+            }
+        }
 
         _logger.Success($"[{ModShortName}] MusicManiac-Consumables-Galore finished loading");
     }
@@ -277,11 +278,10 @@ public class ConsumablesGaloreMain(
         }
 
         // Add to trader
-        // TEMPORARILY DISABLED FOR TESTING
-        //if (consumableFile.Trader != null)
-        //{
-        //    AddToTrader(newConsumableId, consumableFile.Trader, traders);
-        //}
+        if (consumableFile.Trader != null)
+        {
+            AddToTrader(newConsumableId, consumableFile.Trader, traders);
+        }
 
         // Note: Craft recipes are now handled by WTT-ServerCommonLib's CustomHideoutRecipeService
         // They are loaded from the db/CustomHideoutRecipes folder after all items are processed
@@ -1146,318 +1146,66 @@ public class ConsumablesGaloreMain(
     {
         try
         {
-            dynamic trader = null;
-            try
-            {
-                trader = traders[traderData.TraderId];
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning($"[{ModShortName}] Failed to access trader {traderData.TraderId}: {ex.Message}");
-                return;
-            }
+            // Create MongoId for trader
+            var traderId = new MongoId(traderData.TraderId);
 
-            if (trader == null)
+            // Get trader from dictionary - using typed Trader object
+            if (!traders.TryGetValue(traderId, out Trader trader))
             {
                 _logger.Warning($"[{ModShortName}] Trader {traderData.TraderId} not found!");
                 return;
             }
 
-            // SPT 4.0.4: Try both Assort and assort
-            dynamic assort = null;
-            try
+            // Check if item already exists in trader assort
+            var templateId = new MongoId(newConsumableId);
+            if (trader.Assort.Items.Any(i => i.Template == templateId))
             {
-                assort = trader.Assort ?? trader.assort;
-            }
-            catch
-            {
-                _logger.Warning($"[{ModShortName}] Could not access trader assort");
+                _logger.Info($"[{ModShortName}] Item {newConsumableId} already in trader {traderData.TraderId}, skipping");
                 return;
             }
 
-            if (assort == null)
+            // Create trader item (SPT 4.0.4 typed approach)
+            var traderItem = new Item
             {
-                _logger.Warning($"[{ModShortName}] Trader {traderData.TraderId} has no assort!");
+                Id = new MongoId(), // unique offer root id
+                Template = templateId,
+                ParentId = "hideout",
+                SlotId = "hideout",
+                Upd = new Upd
+                {
+                    UnlimitedCount = false,
+                    StackObjectsCount = traderData.AmountForSale
+                }
+            };
+            trader.Assort.Items.Add(traderItem);
+
+            // Create barter scheme (price in roubles)
+            var cost = new BarterScheme
+            {
+                Count = traderData.Price,
+                Template = new MongoId("5449016a4bdc2d6f028b456f") // RUB template id
+            };
+
+            // Add barter scheme with nested list structure [[cost]]
+            if (!trader.Assort.BarterScheme.TryAdd(traderItem.Id, [[cost]]))
+            {
+                // Rollback if barter scheme fails to add
+                trader.Assort.Items.Remove(traderItem);
+                _logger.Warning($"[{ModShortName}] Failed to add barter scheme for {newConsumableId} to trader {traderData.TraderId}");
                 return;
-            }
-
-            // Get Items collection - try both Pascal and lowercase
-            dynamic items = null;
-            try
-            {
-                items = assort.Items ?? assort.items;
-            }
-            catch { }
-
-            if (items != null)
-            {
-                try
-                {
-                    // Get the item type from the list
-                    var itemsType = items.GetType();
-                    Type? itemType = null;
-
-                    if (itemsType.IsGenericType)
-                    {
-                        var genericArgs = itemsType.GetGenericArguments();
-                        if (genericArgs.Length > 0)
-                        {
-                            itemType = genericArgs[0];
-                        }
-                    }
-
-                    if (itemType != null)
-                    {
-                        var newItem = Activator.CreateInstance(itemType);
-
-                        if (newItem != null)
-                        {
-                            // Set _id (MongoId)
-                            var idProp = itemType.GetProperty("Id");
-                            if (idProp != null)
-                            {
-                                var idType = idProp.PropertyType;
-                                var mongoIdConstructor = idType.GetConstructor(new[] { typeof(string) });
-                                if (mongoIdConstructor != null)
-                                {
-                                    var idValue = mongoIdConstructor.Invoke(new object[] { newConsumableId });
-                                    idProp.SetValue(newItem, idValue);
-                                }
-                            }
-
-                            // Set Template (MongoId) - SPT 4.0.4: Property is "Template" not "Tpl"
-                            var templateProp = itemType.GetProperty("Template");
-                            if (templateProp != null)
-                            {
-                                var templateType = templateProp.PropertyType;
-                                var mongoIdConstructor = templateType.GetConstructor(new[] { typeof(string) });
-                                if (mongoIdConstructor != null)
-                                {
-                                    var templateValue = mongoIdConstructor.Invoke(new object[] { newConsumableId });
-                                    templateProp.SetValue(newItem, templateValue);
-                                }
-                            }
-
-                            // Set parentId and slotId
-                            var parentIdProp = itemType.GetProperty("ParentId");
-                            if (parentIdProp != null)
-                            {
-                                parentIdProp.SetValue(newItem, "hideout");
-                            }
-
-                            var slotIdProp = itemType.GetProperty("SlotId");
-                            if (slotIdProp != null)
-                            {
-                                slotIdProp.SetValue(newItem, "hideout");
-                            }
-
-                            // Set upd.UnlimitedCount and upd.StackObjectsCount
-                            var updProp = itemType.GetProperty("Upd");
-                            if (updProp != null)
-                            {
-                                var updValue = updProp.GetValue(newItem);
-                                if (updValue != null)
-                                {
-                                    var updType = updValue.GetType();
-
-                                    var unlimitedCountProp = updType.GetProperty("UnlimitedCount");
-                                    if (unlimitedCountProp != null)
-                                    {
-                                        unlimitedCountProp.SetValue(updValue, false);
-                                    }
-
-                                    var stackCountProp = updType.GetProperty("StackObjectsCount");
-                                    if (stackCountProp != null)
-                                    {
-                                        stackCountProp.SetValue(updValue, traderData.AmountForSale);
-                                    }
-                                }
-                            }
-
-                            // Add to list using reflection to avoid dynamic type issues
-                            var addMethod = itemsType.GetMethod("Add");
-                            if (addMethod != null)
-                            {
-                                addMethod.Invoke(items, new[] { newItem });
-                                _logger.Info($"[{ModShortName}] Added {newConsumableId} to trader {traderData.TraderId}");
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning($"[{ModShortName}] Failed to add item to trader {traderData.TraderId}: {ex.Message}");
-                }
-            }
-
-            // Add barter scheme (price) - try both Pascal and lowercase
-            dynamic barterScheme = null;
-            try
-            {
-                barterScheme = assort.BarterScheme ?? assort.barterScheme ?? assort.Barter_scheme;
-            }
-            catch { }
-
-            if (barterScheme != null)
-            {
-                try
-                {
-                    // Get the value type from the dictionary
-                    var barterSchemeType = barterScheme.GetType();
-                    Type? valueType = null;
-
-                    if (barterSchemeType.IsGenericType)
-                    {
-                        var genericArgs = barterSchemeType.GetGenericArguments();
-                        if (genericArgs.Length >= 2)
-                        {
-                            valueType = genericArgs[1]; // Dictionary<TKey, TValue> - get TValue
-                        }
-                    }
-
-                    if (valueType != null && valueType.IsGenericType)
-                    {
-                        // valueType is List<List<BarterScheme>>
-                        // Get the inner list type: List<BarterScheme>
-                        var outerListElementType = valueType.GetGenericArguments()[0]; // List<BarterScheme>
-
-                        if (outerListElementType.IsGenericType)
-                        {
-                            var barterSchemeElementType = outerListElementType.GetGenericArguments()[0]; // BarterScheme
-
-                            // Create List<List<BarterScheme>>
-                            var outerListType = typeof(List<>).MakeGenericType(outerListElementType);
-                            var outerList = Activator.CreateInstance(outerListType);
-
-                            // Create List<BarterScheme>
-                            var innerListType = typeof(List<>).MakeGenericType(barterSchemeElementType);
-                            var innerList = Activator.CreateInstance(innerListType);
-
-                            if (outerList != null && innerList != null)
-                            {
-                                // Create BarterScheme object
-                                var barterSchemeObj = Activator.CreateInstance(barterSchemeElementType);
-
-                                if (barterSchemeObj != null)
-                                {
-                                    // Set count property (needs to be double?)
-                                    var countProp = barterSchemeElementType.GetProperty("Count");
-                                    if (countProp != null)
-                                    {
-                                        // Convert int to double for Count
-                                        countProp.SetValue(barterSchemeObj, (double)traderData.Price);
-                                    }
-
-                                    // Set Tpl property (MongoId for roubles)
-                                    var tplProp = barterSchemeElementType.GetProperty("Tpl");
-                                    if (tplProp != null)
-                                    {
-                                        var tplType = tplProp.PropertyType;
-                                        var mongoIdConstructor = tplType.GetConstructor(new[] { typeof(string) });
-                                        if (mongoIdConstructor != null)
-                                        {
-                                            var tplValue = mongoIdConstructor.Invoke(new object[] { "5449016a4bdc2d6f028b456f" }); // Roubles
-                                            tplProp.SetValue(barterSchemeObj, tplValue);
-                                        }
-                                    }
-
-                                    // Add to inner list
-                                    var innerAddMethod = innerListType.GetMethod("Add");
-                                    if (innerAddMethod != null)
-                                    {
-                                        innerAddMethod.Invoke(innerList, new[] { barterSchemeObj });
-                                    }
-
-                                    // Add inner list to outer list
-                                    var outerAddMethod = outerListType.GetMethod("Add");
-                                    if (outerAddMethod != null)
-                                    {
-                                        outerAddMethod.Invoke(outerList, new[] { innerList });
-                                    }
-
-                                    // Add to dictionary using reflection
-                                    // Create MongoId key
-                                    var keyType = barterSchemeType.GetGenericArguments()[0];
-                                    var keyConstructor = keyType.GetConstructor(new[] { typeof(string) });
-                                    if (keyConstructor != null)
-                                    {
-                                        var key = keyConstructor.Invoke(new object[] { newConsumableId });
-
-                                        // Use reflection to set dictionary item to avoid dynamic type issues
-                                        var indexerProperty = barterSchemeType.GetProperty("Item");
-                                        if (indexerProperty != null)
-                                        {
-                                            indexerProperty.SetValue(barterScheme, outerList, new[] { key });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning($"[{ModShortName}] Failed to add barter scheme for {newConsumableId}: {ex.Message}");
-                }
             }
 
             // Add loyalty level requirement
-            // SPT 4.0.4: Property is called "LoyalLevelItems" not "LoyaltyLevelItems"
-            dynamic loyaltyLevelItems = null;
-            try
+            if (!trader.Assort.LoyalLevelItems.TryAdd(traderItem.Id, traderData.LoyaltyReq))
             {
-                var assortType = assort.GetType();
-                var loyaltyProp = assortType.GetProperty("LoyalLevelItems");
-                if (loyaltyProp != null)
-                {
-                    loyaltyLevelItems = loyaltyProp.GetValue(assort);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning($"[{ModShortName}] Exception getting LoyalLevelItems: {ex.Message}");
+                // Rollback if loyalty level fails to add
+                trader.Assort.Items.Remove(traderItem);
+                trader.Assort.BarterScheme.Remove(traderItem.Id);
+                _logger.Warning($"[{ModShortName}] Failed to add loyalty level for {newConsumableId} to trader {traderData.TraderId}");
+                return;
             }
 
-            if (loyaltyLevelItems != null)
-            {
-                try
-                {
-                    // Use reflection to set dictionary item with MongoId key
-                    var loyaltyDictType = loyaltyLevelItems.GetType();
-
-                    // Get the key type (should be MongoId)
-                    Type? keyType = null;
-                    if (loyaltyDictType.IsGenericType)
-                    {
-                        var genericArgs = loyaltyDictType.GetGenericArguments();
-                        if (genericArgs.Length > 0)
-                        {
-                            keyType = genericArgs[0];
-                        }
-                    }
-
-                    if (keyType != null)
-                    {
-                        // Create MongoId key from string
-                        var mongoIdConstructor = keyType.GetConstructor(new[] { typeof(string) });
-                        if (mongoIdConstructor != null)
-                        {
-                            var key = mongoIdConstructor.Invoke(new object[] { newConsumableId });
-
-                            // Set dictionary value using indexer property
-                            var indexerProperty = loyaltyDictType.GetProperty("Item");
-                            if (indexerProperty != null)
-                            {
-                                indexerProperty.SetValue(loyaltyLevelItems, traderData.LoyaltyReq, new[] { key });
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning($"[{ModShortName}] Failed to add loyalty level for {newConsumableId}: {ex.Message}");
-                }
-            }
+            _logger.Info($"[{ModShortName}] Successfully added {newConsumableId} to trader {traderData.TraderId} (Loyalty: {traderData.LoyaltyReq}, Price: {traderData.Price}₽, Stock: {traderData.AmountForSale})");
         }
         catch (Exception ex)
         {
@@ -1469,7 +1217,7 @@ public class ConsumablesGaloreMain(
     {
         try
         {
-            var packageJsonPath = Path.Combine(modPath, "Old_ModFiles", "package.json");
+            var packageJsonPath = System.IO.Path.Combine(modPath, "Old_ModFiles", "package.json");
             if (!File.Exists(packageJsonPath))
             {
                 _logger.Info($"[{ModShortName}] Update check skipped - package.json not found in Old_ModFiles");
