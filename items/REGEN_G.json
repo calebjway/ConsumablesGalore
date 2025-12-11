@@ -28,8 +28,8 @@
 			"duration" : 0,
 			"fadeOut" : 0,
 			"cost" : 0,
-			"healthPenaltyMin" : 0,
-			"healthPenaltyMax" : 0
+			"healthPenaltyMin" : 75,
+			"healthPenaltyMax" : 100
 		}
 	},	
 	"Buffs": [
