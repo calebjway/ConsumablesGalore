@@ -34,6 +34,9 @@ public class ConsumableItemData
     [JsonPropertyName("hpResourceRate")]
     public int? HpResourceRate { get; set; }
 
+    [JsonPropertyName("BodyPartPriority")]
+    public List<string>? BodyPartPriority { get; set; }
+
     [JsonPropertyName("BackgroundColor")]
     public string? BackgroundColor { get; set; }
 
@@ -41,7 +44,7 @@ public class ConsumableItemData
     public Dictionary<string, EffectValue>? EffectsHealth { get; set; }
 
     [JsonPropertyName("effects_damage")]
-    public Dictionary<string, EffectDuration>? EffectsDamage { get; set; }
+    public object? EffectsDamage { get; set; }
 
     [JsonPropertyName("medUseTime")]
     public int? MedUseTime { get; set; }
@@ -84,6 +87,7 @@ public class EffectDuration
 
     [JsonPropertyName("fadeOut")]
     public int FadeOut { get; set; }
+
 }
 
 public class BuffData

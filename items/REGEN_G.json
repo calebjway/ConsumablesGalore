@@ -1,12 +1,37 @@
 {
 	"cloneOrigin": "5c0e534186f7747fa1419867",
-	"id": "6832890f4951707edabbe776",
+	"id": "6832890f4951707edabbe786",
 	"name": "REGEN_G",
 	"fleaPrice": 1.3,
 	"handBookPrice": 1.3,
 	"includeInSameQuestsAsOrigin": true,
 	"addSpawnsInSamePlacesAsOrigin": true,
 	"spawnWeightComparedToOrigin": 0.5,
+	"MaxResource": 1,
+	"hpResourceRate": 0,
+	"BodyPartPriority": [
+		"Stomach",
+		"RightLeg",
+		"LeftLeg",
+		"RightArm",
+		"LeftArm"
+	],
+	"effects_damage": {
+		"Fracture" : {
+			"delay" : 0,
+			"duration" : 0,
+			"fadeOut" : 0,
+			"cost" : 0
+		},
+		"DestroyedPart" : {
+			"delay" : 0,
+			"duration" : 0,
+			"fadeOut" : 0,
+			"cost" : 0,
+			"healthPenaltyMin" : 0,
+			"healthPenaltyMax" : 0
+		}
+	},	
 	"Buffs": [
 		{
 			"BuffType": "HealthRate",
@@ -80,14 +105,6 @@
 			"AbsoluteValue": true,
 			"SkillName": ""
 		},
-			"BuffType":	"DestroyedPart",
-			"Chance": 1,
-			"Delay": 0,
-			"Duration": 10,
-			"healthPenaltyMax": 100,
-			"healthPenaltyMin": 100
-        }
-      },
 		{
 			"BuffType": "Contusion",
 			"Chance": 1,

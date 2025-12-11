@@ -567,6 +567,11 @@ public class ConsumablesGaloreMain(
                     props.HpResourceRate = consumableFile.HpResourceRate.Value;
                 }
 
+                if (consumableFile.BodyPartPriority != null)
+                {
+                    props.BodyPartPriority = consumableFile.BodyPartPriority;
+                }
+
                 if (consumableFile.MedUseTime.HasValue)
                 {
                     props.MedUseTime = consumableFile.MedUseTime.Value;
@@ -1367,7 +1372,7 @@ public class ConsumablesGaloreMain(
                 _logger.Info($"[{ModShortName}] {propertyName} key type: {keyType.Name}, value type: {valueType.Name}");
             }
 
-            // Convert our Dictionary<string, EffectValue> or Dictionary<string, EffectDuration> to the target type
+            // Convert our Dictionary<string, EffectValue>, Dictionary<string, EffectDuration>, or raw object to the target type
             if (effectsData is Dictionary<string, EffectValue> healthEffects)
             {
                 foreach (var effect in healthEffects)
@@ -1459,6 +1464,117 @@ public class ConsumablesGaloreMain(
                             _logger.Warning($"[{ModShortName}] Failed to add effect {effect.Key} to {propertyName}: {ex.Message}{innerMsg}");
                         }
                     }
+                }
+            }
+            else if (effectsData is JsonElement jsonElement)
+            {
+                // Handle raw JsonElement (for effects_damage with arbitrary properties like healthPenaltyMin/Max)
+                if (jsonElement.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var property in jsonElement.EnumerateObject())
+                    {
+                        try
+                        {
+                            // Convert string key to enum if needed
+                            object key;
+                            if (keyType.IsEnum)
+                            {
+                                key = Enum.Parse(keyType, property.Name, ignoreCase: true);
+                            }
+                            else
+                            {
+                                key = property.Name;
+                            }
+
+                            // Deserialize the value directly to SPT's target type
+                            var valueJson = property.Value.GetRawText();
+                            var convertedValue = JsonSerializer.Deserialize(valueJson, valueType);
+
+                            // Use dictionary indexer to set/update value
+                            if (convertedValue != null)
+                            {
+                                var indexerProperty = dictType.GetProperty("Item");
+                                if (indexerProperty != null)
+                                {
+                                    indexerProperty.SetValue(existingEffects, convertedValue, new[] { key });
+
+                                    if (config.RealDebug)
+                                    {
+                                        _logger.Info($"[{ModShortName}] Set effect {property.Name} in {propertyName} (from JsonElement)");
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            if (config.Debug)
+                            {
+                                var innerMsg = ex.InnerException != null ? $" Inner: {ex.InnerException.Message}" : "";
+                                _logger.Warning($"[{ModShortName}] Failed to add effect {property.Name} to {propertyName}: {ex.Message}{innerMsg}");
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // Handle as generic object - serialize to JSON and process
+                // This handles when EffectsDamage is deserialized as 'object' from JSON
+                try
+                {
+                    var effectsJson = JsonSerializer.Serialize(effectsData);
+                    var effectsElement = JsonSerializer.Deserialize<JsonElement>(effectsJson);
+
+                    if (effectsElement.ValueKind == JsonValueKind.Object)
+                    {
+                        foreach (var property in effectsElement.EnumerateObject())
+                        {
+                            try
+                            {
+                                // Convert string key to enum if needed
+                                object key;
+                                if (keyType.IsEnum)
+                                {
+                                    key = Enum.Parse(keyType, property.Name, ignoreCase: true);
+                                }
+                                else
+                                {
+                                    key = property.Name;
+                                }
+
+                                // Deserialize the value directly to SPT's target type
+                                var valueJson = property.Value.GetRawText();
+                                var convertedValue = JsonSerializer.Deserialize(valueJson, valueType);
+
+                                // Use dictionary indexer to set/update value
+                                if (convertedValue != null)
+                                {
+                                    var indexerProperty = dictType.GetProperty("Item");
+                                    if (indexerProperty != null)
+                                    {
+                                        indexerProperty.SetValue(existingEffects, convertedValue, new[] { key });
+
+                                        if (config.RealDebug)
+                                        {
+                                            _logger.Info($"[{ModShortName}] Set effect {property.Name} in {propertyName} (from raw object)");
+                                        }
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                if (config.Debug)
+                                {
+                                    var innerMsg = ex.InnerException != null ? $" Inner: {ex.InnerException.Message}" : "";
+                                    _logger.Warning($"[{ModShortName}] Failed to add effect {property.Name} to {propertyName}: {ex.Message}{innerMsg}");
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning($"[{ModShortName}] Failed to process effectsData as raw object: {ex.Message}");
                 }
             }
         }
